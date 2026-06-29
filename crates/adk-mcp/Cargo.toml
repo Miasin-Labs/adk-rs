@@ -1,0 +1,23 @@
+[package]
+name = "adk-mcp"
+version = "0.1.0"
+edition = "2024"
+description = "MCP server that lets an MCP client (e.g. Claude Code) create and run adk-rs agents"
+
+[[bin]]
+name = "adk-mcp"
+path = "src/main.rs"
+
+[dependencies]
+adk-rs = { path = "../.." }
+# Official Rust MCP SDK, pinned to the exact rev this was built+verified against
+# (rmcp-v1.8.0). Portable (git-fetched). Uses rmcp's re-exported `schemars`
+# (see server.rs) so there's no version skew with the tool macros.
+rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", rev = "77932141e3e87f950986e4ee3e698cd6e6ba7cd6", features = ["server", "macros", "transport-io"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "sync", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-trait = "0.1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "std"] }
