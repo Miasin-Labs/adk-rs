@@ -64,6 +64,33 @@ pub(crate) fn agent_event(state: &DevUiState, invocation_id: &str, text: &str) -
     })
 }
 
+pub(crate) fn approval_event(
+    state: &DevUiState,
+    invocation_id: &str,
+    approval_id: &str,
+    tool_name: &str,
+    message: &str,
+    args: Value,
+) -> Value {
+    let mut actions = base_actions();
+    actions["requestedToolConfirmations"] = json!({
+        approval_id: {
+            "toolName": tool_name,
+            "message": message,
+            "args": args
+        }
+    });
+    json!({
+        "id": state.new_event_id(),
+        "invocationId": invocation_id,
+        "author": "hello_world_agent",
+        "timestamp": now_seconds(),
+        "content": { "role": "model", "parts": [{ "text": message }] },
+        "actions": actions,
+        "nodeInfo": { "path": ROOT_NODE_PATH }
+    })
+}
+
 pub(crate) fn error_event(state: &DevUiState, invocation_id: &str, message: &str) -> Value {
     json!({
         "id": state.new_event_id(),

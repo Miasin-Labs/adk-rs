@@ -36,6 +36,13 @@ pub struct RunAgentRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeApprovalRequest {
+    pub session_id: String,
+    pub approved: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct EvalSetCreateRequest {
     pub eval_set: Option<Value>,
 }

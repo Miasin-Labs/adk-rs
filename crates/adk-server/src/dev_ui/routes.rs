@@ -1,23 +1,24 @@
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-use axum::response::{IntoResponse, Redirect, Response};
-use axum::routing::{get, options, post};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{Value, json};
-use tower_http::services::ServeDir;
 
-use super::types::{CreateSessionRequest, RunAgentRequest, UpdateSessionRequest, parse_body};
-use super::{DevUiState, agent, artifacts, evals, graph, tests, traces};
+use super::types::{
+    CreateSessionRequest,
+    ResumeApprovalRequest,
+    RunAgentRequest,
+    UpdateSessionRequest,
+    parse_body,
+};
+use super::{DevUiState, agent, artifacts, evals, graph, n8n, tests, traces};
 
-const DEV_UI_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/static/dev-ui");
-const YEW_UI_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../adk-web/dist");
 const DEFAULT_APP: &str = "hello_world";
 
 pub fn router(state: DevUiState) -> Router {
     Router::new()
-        .route("/", get(|| async { Redirect::temporary("/dev-ui/") }))
-        .route("/favicon.ico", get(|| async { Redirect::temporary("/dev-ui/adk_favicon.svg") }))
         .route("/dev-ui/config", get(ui_config))
         .route("/version", get(version))
         .route("/list-apps", get(|| async { Json(vec![DEFAULT_APP]) }))
@@ -38,6 +39,7 @@ pub fn router(state: DevUiState) -> Router {
         .route("/dev/apps/{app_name}/builder", get(builder_yaml))
         .route("/dev/apps/{app_name}/builder/save", post(builder_save))
         .route("/dev/apps/{app_name}/builder/cancel", post(builder_cancel))
+        .route("/dev/apps/{app_name}/approvals/{approval_id}/resume", post(resume_approval))
         .route("/dev/apps/{app_name}/metrics-info", get(evals::metrics_info))
         .route("/dev/apps/{app_name}/eval_sets", get(evals::sets))
         .route("/dev/apps/{app_name}/eval-sets", post(evals::create_set))
@@ -55,18 +57,17 @@ pub fn router(state: DevUiState) -> Router {
         .route("/dev/apps/{app_name}/debug/trace/{event_id}", get(trace_event))
         .route("/dev/apps/{app_name}/debug/trace/session/{session_id}", get(trace_session))
         .route("/dev/apps/{app_name}/users/{user_id}/sessions/{session_id}/events/{event_id}/graph", get(event_graph))
-        .route("/{*path}", options(preflight))
-        .nest_service("/dev-ui", ServeDir::new(DEV_UI_DIR).append_index_html_on_directories(true))
-        .nest_service("/yew-ui", ServeDir::new(YEW_UI_DIR).append_index_html_on_directories(true))
+        // The verbatim n8n editor-ui SPA: REST/types/push surface, static asset
+        // mounts, and an SPA-aware fallback for client-side routes (served at
+        // the site root).
+        .merge(n8n::router())
+        .merge(n8n::static_routes())
+        .fallback(n8n::spa_fallback)
         .with_state(state)
 }
 
 async fn ui_config() -> Json<Value> {
     Json(json!({ "logo_text": "Agent Development Kit", "logo_image_url": null }))
-}
-
-async fn preflight() -> Response {
-    (cors_headers(), StatusCode::NO_CONTENT).into_response()
 }
 
 async fn version() -> Json<Value> {
@@ -177,6 +178,18 @@ async fn builder_save() -> Json<Value> {
 
 async fn builder_cancel() -> Json<Value> {
     Json(json!({ "ok": true }))
+}
+
+async fn resume_approval(
+    Path((_, approval_id)): Path<(String, String)>,
+    State(state): State<DevUiState>,
+    Json(request): Json<ResumeApprovalRequest>,
+) -> Json<Vec<Value>> {
+    Json(
+        state
+            .resume_approval(&request.session_id, &approval_id, request.approved)
+            .await,
+    )
 }
 
 async fn trace_event(

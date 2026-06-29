@@ -1,9 +1,11 @@
 mod agent;
+mod approvals;
 mod artifacts;
 mod config;
 mod evals;
 mod events;
 mod graph;
+mod n8n;
 mod openai;
 mod routes;
 mod state;

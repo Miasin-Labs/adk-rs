@@ -6,16 +6,26 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
+use super::approvals::{DevPendingApproval, approval_requested};
 use super::events;
 use super::openai::{AgentRun, OpenAiAgent};
 use super::types::{CreateSessionRequest, DevSession, RunAgentRequest};
 
 #[derive(Clone)]
 pub struct DevUiState {
-    sessions: Arc<Mutex<BTreeMap<String, DevSession>>>,
+    pub(super) sessions: Arc<Mutex<BTreeMap<String, DevSession>>>,
     next_session: Arc<AtomicU64>,
     next_event: Arc<AtomicU64>,
     model: Arc<Option<OpenAiAgent>>,
+    pub(super) pending_approvals: Arc<Mutex<BTreeMap<String, DevPendingApproval>>>,
+    /// File-backed n8n workflow store (serves `/rest/workflows`).
+    pub(super) workflows: Arc<super::n8n::workflows::WorkflowStore>,
+    /// File-backed n8n credential store (serves `/rest/credentials`).
+    pub(super) credentials: Arc<super::n8n::credentials::CredentialStore>,
+    /// pushRef-keyed SSE registry (drives the n8n canvas run animation).
+    pub(super) push: Arc<super::n8n::push::PushRegistry>,
+    /// In-memory namespace store backing the n8n "ADK Memory" node.
+    pub(super) memory: Arc<std::sync::Mutex<BTreeMap<String, Vec<Value>>>>,
 }
 
 impl DevUiState {
@@ -100,9 +110,15 @@ impl DevUiState {
         user_text: &str,
         request: &RunAgentRequest,
     ) -> Vec<Value> {
+        if approval_requested(user_text) {
+            return vec![
+                self.create_approval_event(invocation_id, &request.session_id, user_text)
+                    .await,
+            ];
+        }
         let mut rolls = self.session_rolls(&request.session_id).await;
         match self.model.as_ref() {
-            Some(model) => match model.run(&user_text, &mut rolls).await {
+            Some(model) => match model.run(user_text, &mut rolls).await {
                 Ok(run) => self.model_events(invocation_id, run),
                 Err(error) => vec![events::error_event(self, invocation_id, &error)],
             },
@@ -128,7 +144,7 @@ impl DevUiState {
         events
     }
 
-    async fn persist_events(&self, session_id: &str, events: &[Value]) {
+    pub(super) async fn persist_events(&self, session_id: &str, events: &[Value]) {
         if let Some(session) = self.sessions.lock().await.get_mut(session_id) {
             for event in events {
                 apply_state_delta(&mut session.state, event);
@@ -168,6 +184,31 @@ impl DevUiState {
             .cloned()
     }
 
+    /// The configured dev_ui model, if any, for the n8n "ADK Agent" node.
+    pub(super) fn agent(&self) -> Option<&OpenAiAgent> {
+        self.model.as_ref().as_ref()
+    }
+
+    /// All items stored in a memory namespace (ADK Memory node, retrieve).
+    pub(super) fn memory_all(&self, namespace: &str) -> Vec<Value> {
+        self.memory
+            .lock()
+            .unwrap()
+            .get(namespace)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Append items to a memory namespace (ADK Memory node, store).
+    pub(super) fn memory_append(&self, namespace: &str, items: &[Value]) {
+        self.memory
+            .lock()
+            .unwrap()
+            .entry(namespace.to_owned())
+            .or_default()
+            .extend(items.iter().cloned());
+    }
+
     fn new_session_id(&self) -> String {
         let sequence = self.next_session.fetch_add(1, Ordering::Relaxed);
         format!("rust-session-{sequence}")
@@ -181,11 +222,25 @@ impl DevUiState {
 
 impl Default for DevUiState {
     fn default() -> Self {
+        let base_dir = std::env::var("ADK_N8N_DATA_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/.n8n-data"))
+            });
         Self {
             sessions: Arc::default(),
             next_session: Arc::default(),
             next_event: Arc::default(),
             model: Arc::new(OpenAiAgent::load()),
+            pending_approvals: Arc::default(),
+            workflows: Arc::new(super::n8n::workflows::WorkflowStore::load(
+                base_dir.join("workflows"),
+            )),
+            credentials: Arc::new(super::n8n::credentials::CredentialStore::load(
+                base_dir.join("credentials"),
+            )),
+            push: Arc::default(),
+            memory: Arc::default(),
         }
     }
 }

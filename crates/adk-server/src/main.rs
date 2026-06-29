@@ -1,3 +1,6 @@
+// The n8n FrontendSettings payload is a single large nested `json!` literal.
+#![recursion_limit = "512"]
+
 use std::net::SocketAddr;
 
 use adk_rs::{ExactMatchEvaluator, MetricEvaluator, MetricInput, VisualAgentBuilder};
