@@ -1,0 +1,405 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --adk-bg: #121212;
+    --adk-surface: #1a1a1a;
+    --adk-surface-high: #242424;
+    --adk-border: #49454e;
+    --adk-text: #e6e1e6;
+    --adk-muted: #b7b2bd;
+    --adk-blue: #7cc4ff;
+    --adk-blue-deep: #005a9f;
+    --adk-row: #40536b;
+    --adk-lime: #c6f000;
+    --adk-green: #16c784;
+  }
+
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    margin: 0;
+    background: var(--adk-bg);
+    color: var(--adk-text);
+    font-family: "Google Sans", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--adk-blue);
+    outline-offset: 3px;
+  }
+}
+
+@layer components {
+  .adk-card {
+    @apply rounded-[1.25rem] border border-white/10 bg-panel/90 shadow-2xl shadow-black/20;
+  }
+
+  .adk-pill {
+    @apply rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-zinc-300;
+  }
+
+  .adk-dev-shell {
+    width: 100%;
+    min-height: 100dvh;
+    background: var(--adk-bg);
+    color: var(--adk-text);
+  }
+
+  .adk-topbar {
+    display: flex;
+    height: 48px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    border-bottom: 1px solid #202124;
+    background: #0b0b0c;
+    padding: 0 24px;
+  }
+
+  .adk-topbar-left,
+  .adk-topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .adk-brand-mark {
+    display: grid;
+    width: 20px;
+    height: 20px;
+    place-items: center;
+    border-radius: 6px;
+    color: var(--adk-blue);
+    font-family: "Google Sans Mono", monospace;
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .adk-product {
+    white-space: nowrap;
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .adk-product span {
+    color: var(--adk-muted);
+    font-weight: 400;
+  }
+
+  .adk-selector,
+  .adk-new-session {
+    display: inline-flex;
+    height: 36px;
+    align-items: center;
+    gap: 10px;
+    border: 1px solid var(--adk-border);
+    border-radius: 7px;
+    padding: 0 14px;
+    color: var(--adk-text);
+    font-weight: 700;
+  }
+
+  .adk-selector.session {
+    max-width: 390px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .adk-icon-button {
+    display: inline-grid;
+    width: 34px;
+    height: 34px;
+    place-items: center;
+    border-radius: 7px;
+    color: var(--adk-text);
+  }
+
+  .adk-icon-button.bordered {
+    border: 1px solid var(--adk-border);
+  }
+
+  .adk-symbol {
+    font-family: "Material Symbols Outlined";
+    font-size: 24px;
+    font-weight: 400;
+    line-height: 1;
+  }
+
+  .adk-workspace {
+    display: grid;
+    grid-template-columns: 480px minmax(0, 1fr);
+    height: calc(100dvh - 48px);
+    min-height: 0;
+  }
+
+  .adk-side-panel,
+  .adk-chat-card {
+    min-height: 0;
+    background: var(--adk-surface);
+  }
+
+  .adk-side-panel {
+    border-right: 1px solid var(--adk-border);
+  }
+
+  .adk-tabs {
+    display: grid;
+    height: 49px;
+    grid-template-columns: repeat(4, 1fr);
+    border-bottom: 1px solid var(--adk-border);
+  }
+
+  .adk-tab {
+    border-bottom: 2px solid transparent;
+    color: var(--adk-text);
+    font-size: 16px;
+    font-weight: 500;
+  }
+
+  .adk-tab.active {
+    border-color: var(--adk-blue);
+  }
+
+  .adk-event-nav,
+  .adk-chat-toolbar {
+    display: flex;
+    height: 49px;
+    align-items: center;
+    gap: 14px;
+    border-bottom: 1px solid var(--adk-border);
+    padding: 0 16px;
+  }
+
+  .adk-side-body {
+    display: grid;
+    grid-template-columns: 49px minmax(0, 1fr);
+    height: calc(100% - 98px);
+  }
+
+  .adk-rail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    border-right: 1px solid var(--adk-border);
+    padding-top: 24px;
+  }
+
+  .adk-rail-button {
+    display: grid;
+    width: 38px;
+    height: 38px;
+    place-items: center;
+    border-radius: 6px;
+  }
+
+  .adk-rail-button-active {
+    background: #3c4c63;
+  }
+
+  .adk-side-content {
+    min-width: 0;
+  }
+
+  .adk-invocation-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 24px;
+    border-bottom: 1px solid var(--adk-border);
+    padding: 16px 20px;
+  }
+
+  .adk-graph-card {
+    position: relative;
+    display: grid;
+    min-height: 760px;
+    place-items: center;
+  }
+
+  .adk-graph-card svg {
+    width: min(390px, calc(100% - 32px));
+    border-radius: 2px;
+  }
+
+  .adk-fullscreen {
+    position: absolute;
+    top: 24px;
+    right: 24px;
+  }
+
+  .adk-chat-card {
+    position: relative;
+    display: grid;
+    grid-template-rows: 49px minmax(0, 1fr);
+    border-left: 1px solid #202124;
+    overflow: hidden;
+  }
+
+  .adk-segmented {
+    display: inline-flex;
+    overflow: hidden;
+    border: 1px solid #7b7481;
+    border-radius: 999px;
+  }
+
+  .adk-segmented button,
+  .adk-filter {
+    height: 36px;
+    padding: 0 18px;
+    font-weight: 700;
+  }
+
+  .adk-segmented .active {
+    background: #43546b;
+  }
+
+  .adk-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px dashed #7b7481;
+    border-radius: 999px;
+  }
+
+  .adk-events {
+    overflow: auto;
+    padding: 34px 0 128px;
+  }
+
+  .adk-event-row {
+    display: grid;
+    grid-template-columns: 44px 48px minmax(0, 1fr);
+    align-items: start;
+    gap: 18px;
+    padding: 8px 48px;
+  }
+
+  .adk-event-row.selected {
+    background: var(--adk-row);
+  }
+
+  .adk-event-index {
+    padding-top: 12px;
+    font-family: "Google Sans Mono", monospace;
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .adk-event-content {
+    min-width: 0;
+    padding-top: 7px;
+  }
+
+  .adk-user-bubble {
+    margin-left: auto;
+    width: fit-content;
+    max-width: 560px;
+    border-radius: 28px;
+    background: #005a9f;
+    padding: 12px 24px;
+  }
+
+  .adk-avatar {
+    display: grid;
+    width: 44px;
+    height: 44px;
+    place-items: center;
+    border-radius: 999px;
+  }
+
+  .adk-avatar.user {
+    background: #7cc4ff;
+    color: #00284d;
+  }
+
+  .adk-avatar.agent {
+    background: var(--adk-lime);
+    color: #426000;
+  }
+
+  .adk-avatar.error {
+    background: #ffb4ab;
+    color: #690005;
+  }
+
+  .adk-tool-pill,
+  .adk-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 8px;
+    background: #2c2c2f;
+    padding: 7px 12px;
+    font-family: "Google Sans Mono", monospace;
+    font-size: 14px;
+  }
+
+  .adk-tool-pill.ok {
+    color: var(--adk-text);
+  }
+
+  .adk-chip-row {
+    margin-top: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .adk-composer {
+    position: absolute;
+    right: max(80px, calc((100% - 1040px) / 2));
+    bottom: 24px;
+    left: max(80px, calc((100% - 1040px) / 2));
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr) 48px 48px;
+    align-items: center;
+    gap: 8px;
+    border: 2px solid var(--adk-blue);
+    border-radius: 5px;
+    background: #171717;
+    padding: 10px 16px;
+  }
+
+  .adk-composer textarea {
+    height: 32px;
+    resize: none;
+    border: 0;
+    background: transparent;
+    color: var(--adk-text);
+    font-size: 20px;
+    outline: 0;
+  }
+
+  .adk-composer .call {
+    color: #34d399;
+  }
+
+  .adk-composer .send {
+    color: var(--adk-blue);
+  }
+
+  .adk-pending,
+  .adk-empty-pane,
+  .adk-state-list {
+    padding: 24px;
+    color: var(--adk-muted);
+  }
+
+  .adk-state-list {
+    display: grid;
+    gap: 12px;
+    font-family: "Google Sans Mono", monospace;
+  }
+}

@@ -1,0 +1,10 @@
+[package]
+name = "adk-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+adk-rs = { path = "../.." }
+clap = { version = "4", features = ["derive"] }
+serde = "1"
+serde_json = "1"
