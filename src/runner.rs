@@ -1,23 +1,35 @@
+mod context;
+mod cycle;
 mod plugins;
+mod resume;
+mod types;
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use crate::agent::Agent;
 use crate::app::App;
+use crate::approval::PendingApproval;
+use crate::auth::CredentialService;
 use crate::event::{Event, EventActions, EventAuthor, EventPart};
-use crate::ids::{AgentName, EventId, InvocationId, SessionId};
-use crate::invocation::{InvocationContext, InvocationError};
-use crate::model::{ModelError, ModelRequest};
-use crate::plugin::{Plugin, PluginError};
+use crate::guardrail::{GuardrailPhase, enforce_guardrails};
+use crate::ids::{EventId, InvocationId, SessionId};
+use crate::invocation::InvocationContext;
+use crate::plugin::Plugin;
 use crate::run_config::RunConfig;
-use crate::session::{Session, SessionError, SessionStore};
-use crate::tool::{ToolError, ToolResult};
+use crate::run_trace::RunTrace;
+pub use crate::runner::types::{RunError, RunOutput};
+use crate::session::{Session, SessionStore};
+use crate::structured_output::parse_structured_output;
+use crate::tool::ToolResult;
 
 pub struct Runner<S: SessionStore> {
     store: S,
     agent: Agent,
     plugins: Vec<Arc<dyn Plugin>>,
     run_config: RunConfig,
+    credential_service: Option<Arc<dyn CredentialService>>,
+    pending_approvals: Arc<Mutex<BTreeMap<String, PendingApproval>>>,
 }
 
 impl<S: SessionStore> Runner<S> {
@@ -27,6 +39,8 @@ impl<S: SessionStore> Runner<S> {
             agent,
             plugins: Vec::new(),
             run_config: RunConfig::default(),
+            credential_service: None,
+            pending_approvals: Arc::default(),
         }
     }
 
@@ -36,6 +50,8 @@ impl<S: SessionStore> Runner<S> {
             agent: app.root_agent,
             plugins: app.plugins,
             run_config: RunConfig::default(),
+            credential_service: None,
+            pending_approvals: Arc::default(),
         }
     }
 
@@ -46,6 +62,11 @@ impl<S: SessionStore> Runner<S> {
 
     pub fn with_run_config(mut self, run_config: RunConfig) -> Self {
         self.run_config = run_config;
+        self
+    }
+
+    pub fn credential_service(mut self, service: Arc<dyn CredentialService>) -> Self {
+        self.credential_service = Some(service);
         self
     }
 
@@ -64,6 +85,7 @@ impl<S: SessionStore> Runner<S> {
                 .with_run_config(self.run_config.clone());
         self.before_run(&context).await?;
         let input = self.on_user_message(&context, input.into()).await?;
+        enforce_guardrails(&self.run_config.guardrails, GuardrailPhase::Input, &input)?;
         let user_event = self
             .emit_event(
                 &context,
@@ -72,8 +94,11 @@ impl<S: SessionStore> Runner<S> {
             )
             .await?;
         let mut emitted = vec![user_event];
+        let mut trace = RunTrace::default();
 
         let mut current_agent = &self.agent;
+        let finish_reason;
+        let pending_approval;
         loop {
             let outcome = self
                 .run_llm_cycle(
@@ -84,120 +109,32 @@ impl<S: SessionStore> Runner<S> {
                 )
                 .await?;
             emitted.extend(outcome.events);
+            trace.steps.extend(outcome.trace_steps);
             match outcome.next_agent {
                 Some(next_agent) => current_agent = next_agent,
-                None => break,
+                None => {
+                    finish_reason = outcome.finish_reason;
+                    pending_approval = outcome.pending_approval;
+                    break;
+                }
             }
         }
 
         let transfer_to_agent = last_transfer(&emitted);
+        trace.finish_reason = finish_reason;
+        let structured_output =
+            parse_structured_output(&emitted, self.run_config.structured_output_schema.as_ref())?;
         self.store.save(session)?;
         self.after_run(&context).await?;
         Ok(RunOutput {
             events: emitted,
             transfer_to_agent,
+            finish_reason,
+            trace,
+            structured_output,
+            pending_approval,
         })
     }
-
-    async fn run_llm_cycle<'a>(
-        &'a self,
-        agent: &'a Agent,
-        context: &mut InvocationContext,
-        session: &mut Session,
-        invocation_id: InvocationId,
-    ) -> Result<CycleOutcome<'a>, RunError> {
-        let mut emitted = Vec::new();
-        context.agent_name = agent.name.clone();
-
-        loop {
-            context.increment_llm_call_count()?;
-            let request = ModelRequest {
-                instruction: agent.instruction.clone(),
-                events: session.events.clone(),
-                tools: agent.tools.iter().map(|t| t.spec()).collect(),
-            };
-            let response = self
-                .generate_model_response(context, agent, request)
-                .await?;
-            let had_tool_calls = !response.tool_calls.is_empty();
-
-            for call in response.tool_calls {
-                let result = self.call_tool(context, agent, &call).await?;
-                let event = tool_event(invocation_id.clone(), result);
-                let event = self.emit_event(context, session, event).await?;
-                emitted.push(event);
-            }
-
-            let next_agent_name = response.actions.transfer_to_agent.clone();
-            let had_text = if let Some(text) = response.text {
-                let event = Event::text(
-                    invocation_id.clone(),
-                    EventAuthor::Agent(agent.name.clone()),
-                    text,
-                )
-                .with_actions(response.actions);
-                let event = self.emit_event(context, session, event).await?;
-                emitted.push(event);
-                true
-            } else {
-                false
-            };
-
-            if let Some(next_agent_name) = next_agent_name {
-                let next_agent = self
-                    .agent
-                    .find_agent(&next_agent_name)
-                    .ok_or_else(|| RunError::UnknownAgent(next_agent_name.clone()))?;
-                return Ok(CycleOutcome {
-                    events: emitted,
-                    next_agent: Some(next_agent),
-                });
-            }
-
-            if had_text {
-                return Ok(CycleOutcome {
-                    events: emitted,
-                    next_agent: None,
-                });
-            }
-
-            if !had_tool_calls {
-                return Ok(CycleOutcome {
-                    events: emitted,
-                    next_agent: None,
-                });
-            }
-        }
-    }
-}
-
-struct CycleOutcome<'a> {
-    events: Vec<Event>,
-    next_agent: Option<&'a Agent>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct RunOutput {
-    pub events: Vec<Event>,
-    pub transfer_to_agent: Option<crate::ids::AgentName>,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum RunError {
-    #[error(transparent)]
-    Session(#[from] SessionError),
-    #[error(transparent)]
-    Model(#[from] ModelError),
-    #[error(transparent)]
-    Tool(#[from] ToolError),
-    #[error(transparent)]
-    Invocation(#[from] InvocationError),
-    #[error(transparent)]
-    Plugin(#[from] PluginError),
-    #[error("unknown tool {0}")]
-    UnknownTool(String),
-    #[error("unknown agent {0:?}")]
-    UnknownAgent(AgentName),
 }
 
 fn tool_event(invocation_id: InvocationId, result: ToolResult) -> Event {

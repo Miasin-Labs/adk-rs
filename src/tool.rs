@@ -122,6 +122,15 @@ pub struct ToolResult {
     pub content: Value,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolApprovalPolicy {
+    #[default]
+    None,
+    Required {
+        message: String,
+    },
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
     #[error("tool {name} failed: {message}")]
@@ -142,11 +151,23 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    fn approval_policy(&self) -> ToolApprovalPolicy {
+        ToolApprovalPolicy::None
+    }
+
     fn declaration(&self) -> Option<FunctionDeclaration> {
         Some(FunctionDeclaration::from_spec(&self.spec()))
     }
 
     async fn call(&self, call: &ToolCall) -> Result<ToolResult, ToolError>;
+
+    async fn call_with_context(
+        &self,
+        call: &ToolCall,
+        _context: &mut ToolContext,
+    ) -> Result<ToolResult, ToolError> {
+        self.call(call).await
+    }
 
     async fn process_model_request(
         &self,

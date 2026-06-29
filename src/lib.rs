@@ -1,6 +1,7 @@
 pub mod a2a;
 pub mod agent;
 pub mod app;
+pub mod approval;
 pub mod artifact;
 pub mod auth;
 pub mod cli;
@@ -9,7 +10,10 @@ pub mod code_executor;
 pub mod environment;
 pub mod eval;
 pub mod event;
+pub mod fallback_model;
 pub mod file_store;
+pub mod guardrail;
+pub mod http_tool;
 pub mod ids;
 pub mod integration;
 pub mod invocation;
@@ -18,17 +22,21 @@ pub mod live_media;
 pub mod memory;
 pub mod metric;
 pub mod model;
+pub mod openai_compatible;
 pub mod optimization;
 pub mod planner;
 pub mod platform;
 pub mod plugin;
+pub mod prompt;
 pub mod replay;
 pub mod run_config;
+pub mod run_trace;
 pub mod runner;
 pub mod server;
 pub mod session;
 pub mod skills;
 pub mod streaming;
+pub mod structured_output;
 pub mod telemetry;
 pub mod tool;
 pub mod tool_context;
@@ -41,6 +49,7 @@ pub mod workflow_runtime;
 pub use a2a::{A2aAgentCard, A2aError, A2aMessage, A2aTransport, RemoteA2aAgent};
 pub use agent::{Agent, AgentBuilder, AgentError, AgentKind};
 pub use app::App;
+pub use approval::{ApprovalError, PendingApproval, ResumeDecision};
 pub use artifact::{
     Artifact,
     ArtifactError,
@@ -55,6 +64,7 @@ pub use auth::{
     AuthScheme,
     CredentialManager,
     CredentialService,
+    FileCredentialService,
     InMemoryCredentialService,
 };
 pub use cli::CliCommand;
@@ -70,7 +80,13 @@ pub use code_executor::{CodeBlock, CodeExecutionResult, CodeExecutor, CodeExecut
 pub use environment::{Environment, EnvironmentError, LocalEnvironment};
 pub use eval::{EvalCase, EvalMetric, EvalResult, EvalService, InMemoryEvalService};
 pub use event::{Event, EventActions, EventAuthor, EventPart};
+pub use fallback_model::FallbackLanguageModel;
 pub use file_store::{FileArtifactService, FileEvalService, FileSessionStore};
+pub use guardrail::{
+    Guardrail, GuardrailDecision, GuardrailError, GuardrailPhase, KeywordGuardrail, PiiGuardrail,
+    SecretGuardrail,
+};
+pub use http_tool::{HttpMethod, HttpTool, HttpToolConfig};
 pub use ids::{
     AgentName,
     AppName,
@@ -104,19 +120,32 @@ pub use model::{
     ModelResponse,
     ModelSpec,
 };
+pub use openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleModel};
 pub use optimization::{OptimizationCandidate, Optimizer, OptimizerError};
 pub use planner::{Plan, PlanStep, Planner, PlannerError};
 pub use platform::{Clock, SystemClock, UuidGenerator};
 pub use plugin::{Plugin, PluginError};
+pub use prompt::AgentPrompt;
 pub use replay::{InMemoryRecordingStore, Recording, RecordingError, RecordingStore, ReplayCursor};
 pub use run_config::{RunConfig, StreamingMode};
+pub use run_trace::{FinishReason, RunTrace, RunTraceStep};
 pub use runner::{RunError, RunOutput, Runner};
 pub use server::{ApiRoute, DevServerConfig};
 pub use session::{InMemorySessionStore, Session, SessionError, SessionStore};
 pub use skills::{Skill, SkillRegistry};
 pub use streaming::StreamingResponseAggregator;
+pub use structured_output::{StructuredOutputError, StructuredOutputSchema};
 pub use telemetry::{InMemoryTelemetrySink, TelemetrySink, TelemetrySpan, TokenUsage};
-pub use tool::{BuiltinToolKind, Tool, ToolCall, ToolError, ToolRegistry, ToolResult, ToolSpec};
+pub use tool::{
+    BuiltinToolKind,
+    Tool,
+    ToolApprovalPolicy,
+    ToolCall,
+    ToolError,
+    ToolRegistry,
+    ToolResult,
+    ToolSpec,
+};
 pub use tool_context::{ReadonlyContext, ToolContext};
 pub use tool_declaration::{FunctionDeclaration, ToolArgsConfig, ToolConfig, ToolConfirmation};
 pub use toolset::Toolset;

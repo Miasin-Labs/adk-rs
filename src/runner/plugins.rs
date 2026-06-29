@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::agent::Agent;
 use crate::event::Event;
 use crate::invocation::InvocationContext;
@@ -53,6 +55,7 @@ impl<S: SessionStore> Runner<S> {
     pub(super) async fn call_tool(
         &self,
         context: &InvocationContext,
+        session: &Session,
         agent: &Agent,
         call: &ToolCall,
     ) -> Result<ToolResult, RunError> {
@@ -66,7 +69,12 @@ impl<S: SessionStore> Runner<S> {
             .iter()
             .find(|tool| tool.spec().name == call.name)
             .ok_or_else(|| RunError::UnknownTool(call.name.clone()))?;
-        let mut result = tool.call(call).await?;
+        let mut tool_context = super::context::tool_context(
+            context,
+            session,
+            self.credential_service.as_ref().map(Arc::clone),
+        );
+        let mut result = tool.call_with_context(call, &mut tool_context).await?;
         for plugin in &self.plugins {
             result = plugin.after_tool(context, result).await?;
         }

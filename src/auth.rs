@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::{fmt, fs};
 
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +24,7 @@ pub enum AuthScheme {
     ServiceAccount,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuthCredential {
     ApiKey(String),
     BearerToken(String),
@@ -32,6 +34,38 @@ pub enum AuthCredential {
         expires_at_epoch: Option<u64>,
     },
     ServiceAccountJson(String),
+}
+
+impl fmt::Debug for AuthCredential {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ApiKey(secret) => formatter
+                .debug_tuple("ApiKey")
+                .field(&redacted_secret(secret))
+                .finish(),
+            Self::BearerToken(secret) => formatter
+                .debug_tuple("BearerToken")
+                .field(&redacted_secret(secret))
+                .finish(),
+            Self::OAuth2 {
+                access_token,
+                refresh_token,
+                expires_at_epoch,
+            } => formatter
+                .debug_struct("OAuth2")
+                .field("access_token", &redacted_secret(access_token))
+                .field(
+                    "refresh_token",
+                    &refresh_token.as_deref().map(redacted_secret),
+                )
+                .field("expires_at_epoch", expires_at_epoch)
+                .finish(),
+            Self::ServiceAccountJson(secret) => formatter
+                .debug_tuple("ServiceAccountJson")
+                .field(&redacted_secret(secret))
+                .finish(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +129,10 @@ pub trait CredentialService: Send + Sync {
 pub enum AuthError {
     #[error("credential store lock poisoned")]
     Poisoned,
+    #[error("credential store I/O failed")]
+    Io { source: std::io::Error },
+    #[error("credential store JSON failed")]
+    Json { source: serde_json::Error },
 }
 
 #[derive(Debug, Default, Clone)]
@@ -126,6 +164,72 @@ impl CredentialService for InMemoryCredentialService {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct FileCredentialService {
+    path: PathBuf,
+    lock: Arc<Mutex<()>>,
+}
+
+impl FileCredentialService {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            lock: Arc::new(Mutex::new(())),
+        }
+    }
+}
+
+impl CredentialService for FileCredentialService {
+    fn put_credential(
+        &self,
+        app_name: &AppName,
+        user_id: &UserId,
+        key: &str,
+        credential: AuthCredential,
+    ) -> Result<(), AuthError> {
+        let _guard = self.lock.lock().map_err(|_| AuthError::Poisoned)?;
+        let mut credentials = read_credentials(&self.path)?;
+        credentials.insert(credential_key(app_name, user_id, key), credential);
+        write_credentials(&self.path, &credentials)
+    }
+
+    fn get_credential(
+        &self,
+        app_name: &AppName,
+        user_id: &UserId,
+        key: &str,
+    ) -> Result<Option<AuthCredential>, AuthError> {
+        let _guard = self.lock.lock().map_err(|_| AuthError::Poisoned)?;
+        Ok(read_credentials(&self.path)?
+            .get(&credential_key(app_name, user_id, key))
+            .cloned())
+    }
+}
+
 fn credential_key(app_name: &AppName, user_id: &UserId, key: &str) -> String {
     format!("{}:{}:{key}", app_name.as_str(), user_id.as_str())
+}
+
+fn read_credentials(path: &PathBuf) -> Result<BTreeMap<String, AuthCredential>, AuthError> {
+    if !path.exists() {
+        return Ok(BTreeMap::new());
+    }
+    let bytes = fs::read(path).map_err(|source| AuthError::Io { source })?;
+    serde_json::from_slice(&bytes).map_err(|source| AuthError::Json { source })
+}
+
+fn write_credentials(
+    path: &PathBuf,
+    credentials: &BTreeMap<String, AuthCredential>,
+) -> Result<(), AuthError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| AuthError::Io { source })?;
+    }
+    let bytes =
+        serde_json::to_vec_pretty(credentials).map_err(|source| AuthError::Json { source })?;
+    fs::write(path, bytes).map_err(|source| AuthError::Io { source })
+}
+
+fn redacted_secret(secret: &str) -> String {
+    format!("<redacted:{} chars>", secret.len())
 }

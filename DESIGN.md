@@ -34,9 +34,12 @@ ADK Rust web is a technical console for understanding agent execution. The UI sh
 ## Components
 
 - `TopNav`: product label, status pill, docs link.
-- `DevShell`: copied ADK console frame with fixed top toolbar and two-pane workspace.
+- `DevShell`: n8n-style workflow editor shell with fixed top toolbar, node sidebar, canvas, and inspector.
 - `SidePanel`: tabs, invocation selector, vertical rail, and graph/state/artifact/eval details.
 - `ChatPanel`: events/traces toolbar, event transcript, tool chips, state chips, and composer.
+- `BuilderCanvas`: n8n-style node canvas for schedule/chat triggers, agent brain, memory, tools, and output.
+- `NodeCard`: compact workflow node with type label, status, connection ports, and metadata.
+- `InspectorPanel`: read-only builder YAML, graph JSON summary, and runtime wiring status.
 - `Hero`: concise statement and two CTAs.
 - `CapabilityCard`: ports one ADK Python concept to Rust.
 - `FlowRail`: ordered runtime phases.

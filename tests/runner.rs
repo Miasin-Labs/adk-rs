@@ -87,12 +87,13 @@ struct TransferModel;
 #[async_trait]
 impl LanguageModel for TransferModel {
     async fn generate(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
-        let mut actions = EventActions::default();
-        actions.transfer_to_agent = Some(AgentName::new("specialist").unwrap());
         Ok(ModelResponse {
             text: Some(format!("transfer from {}", request.instruction)),
             tool_calls: Vec::new(),
-            actions,
+            actions: EventActions {
+                transfer_to_agent: Some(AgentName::new("specialist").unwrap()),
+                ..EventActions::default()
+            },
         })
     }
 }
