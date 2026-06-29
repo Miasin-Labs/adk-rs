@@ -10,10 +10,14 @@ use adk_rs::{
     InMemorySessionStore, InvocationId, LanguageModel, OpenAiCompatibleConfig,
     OpenAiCompatibleModel, RunConfig, RunOutput, Runner, SessionId, ToolRegistry,
 };
+use rmcp::RoleServer;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
+use rmcp::model::{
+    Implementation, NumberOrString, ProgressToken, ServerCapabilities, ServerInfo,
+};
 use rmcp::schemars::{self, JsonSchema};
+use rmcp::service::RequestContext;
 use rmcp::{Json, ServerHandler, tool, tool_handler, tool_router};
 use serde::{Deserialize, Serialize};
 
@@ -321,6 +325,7 @@ impl AdkMcp {
     pub async fn run_agent(
         &self,
         Parameters(req): Parameters<RunAgentRequest>,
+        context: RequestContext<RoleServer>,
     ) -> Result<Json<RunResponse>, String> {
         let spec = self
             .registry
@@ -331,7 +336,18 @@ impl AdkMcp {
             return Err("OPENAI_API_KEY is not set; cannot run agents".into());
         }
         let agent = self.build_agent(&spec)?;
-        let runner = Runner::new(self.sessions.clone(), agent).with_run_config(RunConfig::default());
+        let mut runner =
+            Runner::new(self.sessions.clone(), agent).with_run_config(RunConfig::default());
+        // When the client supplies a progress token, stream the run's events
+        // back as `notifications/progress`.
+        if let Some((_, raw)) = context.meta.get_key_value("progressToken")
+            && let Ok(token) = serde_json::from_value::<NumberOrString>(raw.clone())
+        {
+            runner = runner.plugin(std::sync::Arc::new(crate::progress::ProgressPlugin::new(
+                context.peer.clone(),
+                ProgressToken(token),
+            )));
+        }
 
         let session_id_str = req.session_id.unwrap_or_else(|| "default".into());
         let session_id =

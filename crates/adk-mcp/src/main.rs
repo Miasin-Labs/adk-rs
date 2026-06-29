@@ -2,6 +2,7 @@
 //!
 //! STDIO RULE: all logging goes to stderr — stdout is the JSON-RPC channel.
 
+mod progress;
 mod registry;
 mod server;
 mod tools;
