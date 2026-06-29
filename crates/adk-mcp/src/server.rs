@@ -16,7 +16,6 @@ use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use rmcp::schemars::{self, JsonSchema};
 use rmcp::{Json, ServerHandler, tool, tool_handler, tool_router};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::registry::{AgentKindSpec, AgentRegistry, AgentSpec, AgentSummary, now_secs};
 use crate::tools::{EXECUTABLE_TOOLS, resolve_tool};
@@ -128,7 +127,8 @@ pub struct RunResponse {
     pub session_id: String,
     pub finish_reason: String,
     pub output: String,
-    pub structured_output: Option<Value>,
+    /// JSON-encoded structured output, if the agent produced any (else null).
+    pub structured_output: Option<String>,
     pub event_count: usize,
 }
 
@@ -349,7 +349,7 @@ impl AdkMcp {
             session_id: session_id_str,
             finish_reason: format!("{:?}", output.finish_reason),
             output: Self::final_text(&output),
-            structured_output: output.structured_output.clone(),
+            structured_output: output.structured_output.as_ref().map(ToString::to_string),
             event_count: output.events.len(),
         }))
     }
