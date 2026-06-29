@@ -8,7 +8,7 @@ use crate::model::ModelRequest;
 use crate::run_trace::{FinishReason, RunTraceStep};
 use crate::runner::context::request_events;
 use crate::runner::types::{CycleOutcome, RunError};
-use crate::runner::{Runner, tool_event};
+use crate::runner::{Runner, tool_call_event, tool_event};
 use crate::session::{Session, SessionStore};
 use crate::tool::ToolApprovalPolicy;
 
@@ -50,6 +50,15 @@ impl<S: SessionStore> Runner<S> {
                 .generate_model_response(context, agent, request)
                 .await?;
             let had_tool_calls = !response.tool_calls.is_empty();
+
+            // Record the assistant's tool calls before running them, so the
+            // session keeps each tool result paired with its originating call.
+            if had_tool_calls {
+                let event =
+                    tool_call_event(invocation_id.clone(), agent.name.clone(), &response.tool_calls);
+                let event = self.emit_event(context, session, event).await?;
+                emitted.push(event);
+            }
 
             for call in response.tool_calls {
                 enforce_guardrails(

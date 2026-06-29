@@ -186,8 +186,12 @@ async fn runner_records_user_tool_and_agent_events_normal() {
     let events = output.events;
 
     assert!(matches!(events[0].author, EventAuthor::User));
-    assert!(matches!(events[1].parts[0], EventPart::ToolResult(_)));
-    assert!(matches!(events[2].author, EventAuthor::Agent(_)));
+    // The assistant's tool call is recorded before the tool result.
+    assert!(matches!(events[1].author, EventAuthor::Agent(_)));
+    assert!(matches!(events[1].parts[0], EventPart::ToolCall(_)));
+    assert!(matches!(events[2].parts[0], EventPart::ToolResult(_)));
+    assert!(matches!(events[3].author, EventAuthor::Agent(_)));
+    assert!(matches!(events[3].parts[0], EventPart::Text(_)));
 }
 
 #[tokio::test]
@@ -213,11 +217,10 @@ async fn runner_feeds_tool_results_back_to_model_normal() {
         .await
         .unwrap();
 
-    assert!(matches!(
-        output.events[1].parts[0],
-        EventPart::ToolResult(_)
-    ));
-    assert!(matches!(output.events[2].author, EventAuthor::Agent(_)));
+    // assistant tool call (1), tool result (2), then the final agent text (3).
+    assert!(matches!(output.events[1].parts[0], EventPart::ToolCall(_)));
+    assert!(matches!(output.events[2].parts[0], EventPart::ToolResult(_)));
+    assert!(matches!(output.events[3].author, EventAuthor::Agent(_)));
 }
 
 #[tokio::test]

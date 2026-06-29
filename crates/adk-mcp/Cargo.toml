@@ -15,6 +15,7 @@ adk-rs = { path = "../.." }
 # (see server.rs) so there's no version skew with the tool macros.
 rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", rev = "77932141e3e87f950986e4ee3e698cd6e6ba7cd6", features = ["server", "macros", "transport-io"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "sync", "signal"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 async-trait = "0.1"

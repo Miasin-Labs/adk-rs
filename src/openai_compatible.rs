@@ -96,22 +96,53 @@ fn chat_request(model: &str, request: &ModelRequest) -> Value {
 }
 
 fn event_messages(event: &Event) -> Vec<Value> {
-    event
+    let mut messages = Vec::new();
+
+    // Tool calls must ride on a single `assistant` message (with `tool_calls`)
+    // that precedes the matching `tool` result messages — otherwise the API
+    // rejects the request.
+    let tool_calls: Vec<Value> = event
         .parts
         .iter()
         .filter_map(|part| match part {
-            EventPart::Text(text) => Some(json!({
-                "role": author_role(&event.author),
-                "content": text,
+            EventPart::ToolCall(call) => Some(json!({
+                "id": call.id,
+                "type": "function",
+                "function": { "name": call.name, "arguments": call.args.to_string() },
             })),
-            EventPart::ToolResult(result) => Some(json!({
+            _ => None,
+        })
+        .collect();
+    let text = event.parts.iter().find_map(|part| match part {
+        EventPart::Text(text) => Some(text.clone()),
+        _ => None,
+    });
+
+    if !tool_calls.is_empty() {
+        // `content` is null when the assistant only calls tools.
+        messages.push(json!({
+            "role": "assistant",
+            "content": text,
+            "tool_calls": tool_calls,
+        }));
+    } else if let Some(text) = text {
+        messages.push(json!({
+            "role": author_role(&event.author),
+            "content": text,
+        }));
+    }
+
+    for part in &event.parts {
+        if let EventPart::ToolResult(result) = part {
+            messages.push(json!({
                 "role": "tool",
                 "tool_call_id": result.call_id,
                 "content": result.content.to_string(),
-            })),
-            EventPart::ToolCall(_) => None,
-        })
-        .collect()
+            }));
+        }
+    }
+
+    messages
 }
 
 fn author_role(author: &EventAuthor) -> &'static str {

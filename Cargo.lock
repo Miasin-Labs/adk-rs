@@ -19,6 +19,7 @@ dependencies = [
  "adk-rs",
  "anyhow",
  "async-trait",
+ "reqwest",
  "rmcp",
  "serde",
  "serde_json",

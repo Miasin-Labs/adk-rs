@@ -13,7 +13,7 @@ use crate::approval::PendingApproval;
 use crate::auth::CredentialService;
 use crate::event::{Event, EventActions, EventAuthor, EventPart};
 use crate::guardrail::{GuardrailPhase, enforce_guardrails};
-use crate::ids::{EventId, InvocationId, SessionId};
+use crate::ids::{AgentName, EventId, InvocationId, SessionId};
 use crate::invocation::InvocationContext;
 use crate::plugin::Plugin;
 use crate::run_config::RunConfig;
@@ -21,7 +21,7 @@ use crate::run_trace::RunTrace;
 pub use crate::runner::types::{RunError, RunOutput};
 use crate::session::{Session, SessionStore};
 use crate::structured_output::parse_structured_output;
-use crate::tool::ToolResult;
+use crate::tool::{ToolCall, ToolResult};
 
 pub struct Runner<S: SessionStore> {
     store: S,
@@ -143,6 +143,20 @@ fn tool_event(invocation_id: InvocationId, result: ToolResult) -> Event {
         invocation_id,
         author: EventAuthor::Tool(result.call_id.clone()),
         parts: vec![EventPart::ToolResult(result)],
+        actions: EventActions::default(),
+        timestamp_seconds: 0,
+    }
+}
+
+/// The assistant event that records the model's tool calls. It must be appended
+/// to the session before the tool-result events so the next model request keeps
+/// each `tool` message paired with its preceding `tool_calls`.
+fn tool_call_event(invocation_id: InvocationId, agent_name: AgentName, calls: &[ToolCall]) -> Event {
+    Event {
+        id: EventId::for_index(0),
+        invocation_id,
+        author: EventAuthor::Agent(agent_name),
+        parts: calls.iter().cloned().map(EventPart::ToolCall).collect(),
         actions: EventActions::default(),
         timestamp_seconds: 0,
     }
