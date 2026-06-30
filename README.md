@@ -114,6 +114,7 @@ cargo run --example simple_agent
 cargo run --example tool_agent
 cargo run --example handoff_agents
 cargo run --example react_agent
+cargo run --example sequential_workflow
 cargo run --example trail_advisor
 ```
 
@@ -155,12 +156,30 @@ The runner records the user event, asks the active agent's model for a response,
 executes requested tools, appends tool results, and follows `transfer_to_agent`
 actions when the model hands off to a sub-agent.
 
+## Workflow agents
+
+An agent's `AgentKind` controls orchestration:
+
+- **`Llm`** (default): a single agent that may hand off to a sub-agent when its
+  model emits a `transfer_to_agent` action (see `handoff_agents`).
+- **`Sequential`**: the runner executes the agent's `sub_agents` in declaration
+  order over one shared session, so each stage sees the previous stages' output
+  (see `sequential_workflow`). The model-driven `transfer_to_agent` still takes
+  precedence if a stage requests one.
+
+Build a sequential pipeline with `AgentBuilder::sequential()` plus
+`.sub_agent(..)` calls. (The flat `AgentSpec` over MCP describes a single agent,
+so author multi-stage pipelines through the library or `AgentBlueprint`.)
+
 ## Example map
 
 - `simple_agent`: one model response, closest to a basic LLM app.
 - `tool_agent`: model asks Rust for deterministic work, then answers.
 - `handoff_agents`: router agent transfers work to a specialist sub-agent.
 - `react_agent`: reason-act-observe loop over search and critique tools.
+- `sequential_workflow`: a `Sequential` agent runs its sub-agents in order
+  (scope -> analyze -> report) over one shared session, each stage building on
+  the last.
 - `trail_advisor`: personal-assistant demo with local HTTP tools, scoped
   credentials, memory-window config, and message-preview safety.
 

@@ -111,6 +111,23 @@ impl LanguageModel for SpecialistModel {
     }
 }
 
+/// Emits a fixed line and records how many prior events it saw, so a test can
+/// prove later pipeline stages observe earlier stages' output.
+struct StageModel {
+    label: &'static str,
+}
+
+#[async_trait]
+impl LanguageModel for StageModel {
+    async fn generate(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
+        Ok(ModelResponse {
+            text: Some(format!("{} saw {} events", self.label, request.events.len())),
+            tool_calls: Vec::new(),
+            actions: EventActions::default(),
+        })
+    }
+}
+
 struct PanicModel;
 
 #[async_trait]
@@ -258,6 +275,75 @@ async fn runner_transfers_to_agent_tree_member_normal() {
     assert!(output.events.iter().any(|event| {
         matches!(&event.author, EventAuthor::Agent(name) if name == &AgentName::new("specialist").unwrap())
     }));
+}
+
+#[tokio::test]
+async fn runner_runs_sequential_sub_agents_in_order_normal() {
+    let scope = AgentBuilder::new(
+        AgentName::new("scope").unwrap(),
+        "scope the request",
+        Arc::new(StageModel { label: "scope" }),
+    )
+    .build()
+    .unwrap();
+    let analyze = AgentBuilder::new(
+        AgentName::new("analyze").unwrap(),
+        "analyze the scoped request",
+        Arc::new(StageModel { label: "analyze" }),
+    )
+    .build()
+    .unwrap();
+    let report = AgentBuilder::new(
+        AgentName::new("report").unwrap(),
+        "summarize the analysis",
+        Arc::new(StageModel { label: "report" }),
+    )
+    .build()
+    .unwrap();
+
+    let pipeline = AgentBuilder::new(
+        AgentName::new("pipeline").unwrap(),
+        "run the stages in order",
+        Arc::new(PanicModel), // the root model must never be called for a sequential pipeline
+    )
+    .sequential()
+    .sub_agent(scope)
+    .sub_agent(analyze)
+    .sub_agent(report)
+    .build()
+    .unwrap();
+
+    let runner = Runner::new(InMemorySessionStore::default(), pipeline);
+    let output = runner
+        .run(
+            &SessionId::new("seq").unwrap(),
+            InvocationId::new("i-seq").unwrap(),
+            "do the work",
+        )
+        .await
+        .unwrap();
+
+    // Each stage emits exactly one agent text event, in declaration order.
+    let stage_texts: Vec<(String, String)> = output
+        .events
+        .iter()
+        .filter_map(|event| match (&event.author, event.parts.first()) {
+            (EventAuthor::Agent(name), Some(EventPart::Text(text))) => {
+                Some((name.as_str().to_owned(), text.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(stage_texts.len(), 3);
+    assert_eq!(stage_texts[0].0, "scope");
+    assert_eq!(stage_texts[1].0, "analyze");
+    assert_eq!(stage_texts[2].0, "report");
+    // Each later stage sees strictly more session events than the prior one,
+    // proving the shared session threads output forward.
+    assert!(stage_texts[0].1.starts_with("scope saw 1 events"));
+    assert!(stage_texts[1].1.starts_with("analyze saw 2 events"));
+    assert!(stage_texts[2].1.starts_with("report saw 3 events"));
 }
 
 #[tokio::test]

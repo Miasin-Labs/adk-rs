@@ -7,7 +7,7 @@ mod types;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use crate::agent::Agent;
+use crate::agent::{Agent, AgentKind};
 use crate::app::App;
 use crate::approval::PendingApproval;
 use crate::auth::CredentialService;
@@ -96,7 +96,12 @@ impl<S: SessionStore> Runner<S> {
         let mut emitted = vec![user_event];
         let mut trace = RunTrace::default();
 
-        let mut current_agent = &self.agent;
+        // A `Sequential` root runs each of its sub-agents in declaration order
+        // over the same session, so each step sees the prior steps' output. Any
+        // other kind starts at the root and follows model-driven transfers.
+        let pipeline = sequential_pipeline(&self.agent);
+        let mut step_index = 0;
+        let mut current_agent = pipeline[step_index];
         let finish_reason;
         let pending_approval;
         loop {
@@ -111,11 +116,24 @@ impl<S: SessionStore> Runner<S> {
             emitted.extend(outcome.events);
             trace.steps.extend(outcome.trace_steps);
             match outcome.next_agent {
+                // A model-driven `transfer_to_agent` overrides the pipeline.
                 Some(next_agent) => current_agent = next_agent,
                 None => {
-                    finish_reason = outcome.finish_reason;
-                    pending_approval = outcome.pending_approval;
-                    break;
+                    // Suspended runs must surface immediately for resumption.
+                    if outcome.pending_approval.is_some() {
+                        finish_reason = outcome.finish_reason;
+                        pending_approval = outcome.pending_approval;
+                        break;
+                    }
+                    // Otherwise advance to the next stage of the pipeline, if any.
+                    step_index += 1;
+                    if let Some(next_step) = pipeline.get(step_index) {
+                        current_agent = next_step;
+                    } else {
+                        finish_reason = outcome.finish_reason;
+                        pending_approval = outcome.pending_approval;
+                        break;
+                    }
                 }
             }
         }
@@ -167,4 +185,15 @@ fn last_transfer(events: &[Event]) -> Option<crate::ids::AgentName> {
         .iter()
         .rev()
         .find_map(|event| event.actions.transfer_to_agent.clone())
+}
+
+/// The ordered list of agents to run for `root`. A `Sequential` agent with
+/// sub-agents yields those sub-agents in declaration order; every other shape
+/// yields just the root (which may still hand off via `transfer_to_agent`).
+fn sequential_pipeline(root: &Agent) -> Vec<&Agent> {
+    if matches!(root.kind, AgentKind::Sequential) && !root.sub_agents.is_empty() {
+        root.sub_agents.iter().collect()
+    } else {
+        vec![root]
+    }
 }

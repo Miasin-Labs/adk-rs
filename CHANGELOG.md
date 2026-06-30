@@ -1,5 +1,14 @@
 # Changelog
 
+## Sequential workflow execution
+
+The runner now acts on `AgentKind::Sequential`: a sequential agent runs its
+`sub_agents` in declaration order over one shared session, so each stage builds
+on the previous stages' output. Previously `AgentKind` was stored but inert and
+only model-driven `transfer_to_agent` handoffs were executed. Model-driven
+transfers still take precedence within a stage. Added the `sequential_workflow`
+example and a runner test.
+
 ## Standalone runtime: dev-server / external editor UI removed
 
 adk-rs is now a self-contained Rust agent runtime. The previous experiment that
