@@ -197,14 +197,78 @@ through the library or `AgentBlueprint`.)
 
 ## Real model adapters
 
-`OpenAiCompatibleModel` provides the first hosted-model adapter shape. It posts
-Chat Completions-compatible requests, sends tool schemas, parses tool calls, and
-accepts `AuthCredential` values for authorization. Use a local fake server in
-tests, then point `OpenAiCompatibleConfig.base_url` at an OpenAI-compatible
+Three hosted-model adapters ship, each mapping the provider's tool/function
+calls into `ModelResponse`:
+
+- `OpenAiCompatibleModel` — Chat Completions-compatible endpoints
+  (`OpenAiCompatibleConfig.base_url`).
+- `GeminiModel` — Google Generative Language `generateContent`, including
+  `functionCall` mapping (`GeminiConfig`).
+- `AnthropicModel` — Anthropic Messages API, including `tool_use` mapping
+  (`AnthropicConfig`).
+
+Each is tested against a local fake HTTP server, so no live key is needed to
+exercise request/response shaping; point the config `base_url` at the real
 endpoint for live use.
 
 For resilience, wrap multiple model adapters in `FallbackLanguageModel`; it will
 try each model in order until one returns a response.
+
+## Runner services
+
+The `Runner` has builder methods that wire optional services into the run loop:
+
+- `.memory(service)` — searches a `MemoryService` with the user input and
+  injects the retrieved entries into the model instruction (RAG retrieval).
+- `.planner(p)` — calls `Planner::build_plan` before the loop and injects the
+  plan steps into the instruction.
+- `.skills(registry)` — injects a `SkillRegistry`'s skill prompts into the
+  instruction.
+- `.telemetry(sink)` — emits a `TelemetrySink` span for the run and per model
+  call.
+- `.metric(evaluator)` — runs `MetricEvaluator`s after the turn; results are
+  returned on `RunOutput.metrics`.
+
+The optional memory/planner/skills text is composed into a single run-level
+instruction preamble, so every model call in the run sees it.
+
+## Streaming
+
+`Runner::stream` returns a `RunStream` that yields `RunStreamItem::Event(..)` as
+the run produces events, ending with a single `RunStreamItem::Done(RunOutput)`.
+It drives the same loop as `Runner::run`, just incrementally.
+
+## Recording and replay
+
+`Runner::record_to(store, id)` persists a run's emitted events to a
+`RecordingStore` after the run. A `ReplayModel` (a `LanguageModel` built from a
+`Recording`) then replays the recorded agent responses in order, so a captured
+run can be re-executed deterministically without a live model.
+
+## Persistence and credentials
+
+Sessions and artifacts have in-memory, file, and SQLite backends. The SQLite
+backends (`SqliteSessionStore`, `SqliteArtifactService`, default `sqlite`
+feature, `rusqlite` bundled) persist across process restarts on the same file.
+
+Credentials can be stored with `FileCredentialService` (plaintext JSON) or
+`EncryptedFileCredentialService`, which encrypts the blob at rest with
+ChaCha20-Poly1305 (key derived from a passphrase or the `ADK_CREDENTIAL_KEY`
+env var); the on-disk file is ciphertext and credential `Debug` output is
+redacted.
+
+## Prompt optimization
+
+`MetricGuidedOptimizer` scores candidate prompt variants with a
+`MetricEvaluator` and returns the highest-scoring `OptimizationCandidate`. The
+base prompt is always a candidate, so optimization never regresses below the
+input.
+
+## Bidirectional live media
+
+`DuplexLiveMediaAdapter` models a duplex audio/video stream: it buffers outbound
+chunks via `send_chunk` and delivers inbound chunks pushed from the remote side
+through an `mpsc` channel (`push_inbound` / `recv_inbound`).
 
 ## Structured Output
 
@@ -222,7 +286,14 @@ instead of executing the tool. Call `Runner::resume_tool_call` with
 ## Current status
 
 This repository is a working Rust foundation, not a complete Python ADK clone.
-The core typed surfaces are present, including agents, sessions, tools, model
-requests, events, memory, artifacts, evals, telemetry, live request queues,
-workflow graphs, and CLI/MCP shapes. See `PORTING.md` for the remaining parity
-gaps.
+The runtime executes typed agents; Sequential/Parallel/Loop workflows plus
+model-driven handoff; tools and tool approval; OpenAI-compatible, Gemini, and
+Anthropic model adapters (with fallback); sessions and artifacts (in-memory,
+file, and SQLite); structured output; guardrails; and the runner services above
+(memory/RAG retrieval, telemetry, skills, planner, post-turn metrics, plus
+streaming and record/replay).
+
+The main intentional non-goal is a web UI. The chief remaining gap is
+cloud/database session+artifact backends beyond SQLite (e.g. Postgres), which
+need external infrastructure. See `PORTING.md` for the audited functional /
+declaration-only / missing breakdown.
