@@ -1,13 +1,22 @@
 # Changelog
 
-## Sequential workflow execution
+## Workflow agent execution (Sequential, Parallel, Loop)
 
-The runner now acts on `AgentKind::Sequential`: a sequential agent runs its
-`sub_agents` in declaration order over one shared session, so each stage builds
-on the previous stages' output. Previously `AgentKind` was stored but inert and
-only model-driven `transfer_to_agent` handoffs were executed. Model-driven
-transfers still take precedence within a stage. Added the `sequential_workflow`
-example and a runner test.
+The runner now acts on `AgentKind`. Previously the kind was stored but inert and
+only model-driven `transfer_to_agent` handoffs ran. All workflow kinds run their
+`sub_agents` over one shared session:
+
+- **`Sequential`**: runs sub-agents in declaration order, so each stage builds
+  on the previous stages' output.
+- **`Parallel`**: runs each sub-agent as an independent branch, fanning results
+  back into the session.
+- **`Loop { max_iterations }`**: re-runs the sub-agent pipeline until a child
+  emits an `escalate` action or `max_iterations` is reached.
+
+Orchestration is recursive, so workflow agents nest. A workflow kind with no
+sub-agents degrades to a single LLM cycle, and a model-driven
+`transfer_to_agent` still takes precedence within a stage. Added the
+`sequential_workflow` example and runner tests for all three kinds.
 
 ## Standalone runtime: dev-server / external editor UI removed
 

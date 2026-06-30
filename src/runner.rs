@@ -17,7 +17,7 @@ use crate::ids::{AgentName, EventId, InvocationId, SessionId};
 use crate::invocation::InvocationContext;
 use crate::plugin::Plugin;
 use crate::run_config::RunConfig;
-use crate::run_trace::RunTrace;
+use crate::run_trace::{FinishReason, RunTrace};
 pub use crate::runner::types::{RunError, RunOutput};
 use crate::session::{Session, SessionStore};
 use crate::structured_output::parse_structured_output;
@@ -96,47 +96,21 @@ impl<S: SessionStore> Runner<S> {
         let mut emitted = vec![user_event];
         let mut trace = RunTrace::default();
 
-        // A `Sequential` root runs each of its sub-agents in declaration order
-        // over the same session, so each step sees the prior steps' output. Any
-        // other kind starts at the root and follows model-driven transfers.
-        let pipeline = sequential_pipeline(&self.agent);
-        let mut step_index = 0;
-        let mut current_agent = pipeline[step_index];
-        let finish_reason;
-        let pending_approval;
-        loop {
-            let outcome = self
-                .run_llm_cycle(
-                    current_agent,
-                    &mut context,
-                    &mut session,
-                    invocation_id.clone(),
-                )
-                .await?;
-            emitted.extend(outcome.events);
-            trace.steps.extend(outcome.trace_steps);
-            match outcome.next_agent {
-                // A model-driven `transfer_to_agent` overrides the pipeline.
-                Some(next_agent) => current_agent = next_agent,
-                None => {
-                    // Suspended runs must surface immediately for resumption.
-                    if outcome.pending_approval.is_some() {
-                        finish_reason = outcome.finish_reason;
-                        pending_approval = outcome.pending_approval;
-                        break;
-                    }
-                    // Otherwise advance to the next stage of the pipeline, if any.
-                    step_index += 1;
-                    if let Some(next_step) = pipeline.get(step_index) {
-                        current_agent = next_step;
-                    } else {
-                        finish_reason = outcome.finish_reason;
-                        pending_approval = outcome.pending_approval;
-                        break;
-                    }
-                }
-            }
-        }
+        // Orchestrate the root agent according to its `AgentKind` (Llm/handoff,
+        // Sequential, Parallel, Loop). Returns the run's overall finish reason
+        // and any pending approval that suspended it.
+        let node = self
+            .run_node(
+                &self.agent,
+                &mut context,
+                &mut session,
+                invocation_id.clone(),
+                &mut emitted,
+                &mut trace,
+            )
+            .await?;
+        let finish_reason = node.finish_reason;
+        let pending_approval = node.pending_approval;
 
         let transfer_to_agent = last_transfer(&emitted);
         trace.finish_reason = finish_reason;
@@ -187,13 +161,175 @@ fn last_transfer(events: &[Event]) -> Option<crate::ids::AgentName> {
         .find_map(|event| event.actions.transfer_to_agent.clone())
 }
 
-/// The ordered list of agents to run for `root`. A `Sequential` agent with
-/// sub-agents yields those sub-agents in declaration order; every other shape
-/// yields just the root (which may still hand off via `transfer_to_agent`).
-fn sequential_pipeline(root: &Agent) -> Vec<&Agent> {
-    if matches!(root.kind, AgentKind::Sequential) && !root.sub_agents.is_empty() {
-        root.sub_agents.iter().collect()
-    } else {
-        vec![root]
+/// True if any of `events` carries an `escalate` action, the loop-stop signal.
+fn has_escalation(events: &[Event]) -> bool {
+    events
+        .iter()
+        .any(|event| event.actions.escalate == Some(true))
+}
+
+/// Result of orchestrating one agent node (and its sub-tree).
+struct NodeOutcome {
+    finish_reason: FinishReason,
+    pending_approval: Option<PendingApproval>,
+}
+
+impl NodeOutcome {
+    fn done(finish_reason: FinishReason) -> Self {
+        Self {
+            finish_reason,
+            pending_approval: None,
+        }
+    }
+
+    fn suspended(pending: PendingApproval) -> Self {
+        Self {
+            finish_reason: FinishReason::Suspended,
+            pending_approval: Some(pending),
+        }
+    }
+
+    fn is_suspended(&self) -> bool {
+        self.pending_approval.is_some()
+    }
+}
+
+impl<S: SessionStore> Runner<S> {
+    /// Orchestrate one agent according to its `AgentKind`, appending every
+    /// emitted event to `emitted` and every trace step to `trace`.
+    ///
+    /// - `Llm`: a single LLM cycle, following model-driven `transfer_to_agent`
+    ///   handoffs across the agent tree.
+    /// - `Sequential`: run each sub-agent in declaration order over the shared
+    ///   session, so each stage sees the prior stages' output.
+    /// - `Parallel`: run each sub-agent independently over the shared session
+    ///   (sequentially executed here, but with no data dependency between
+    ///   branches — each branch only fans results back in).
+    /// - `Loop`: re-run the sub-agent pipeline until a child escalates
+    ///   (`EventActions::escalate`) or `max_iterations` is reached.
+    ///
+    /// A node with a workflow kind but no sub-agents degrades to a single LLM
+    /// cycle, so nothing is silently skipped.
+    fn run_node<'a>(
+        &'a self,
+        agent: &'a Agent,
+        context: &'a mut InvocationContext,
+        session: &'a mut Session,
+        invocation_id: InvocationId,
+        emitted: &'a mut Vec<Event>,
+        trace: &'a mut RunTrace,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<NodeOutcome, RunError>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            match &agent.kind {
+                AgentKind::Sequential if !agent.sub_agents.is_empty() => {
+                    self.run_children_once(agent, context, session, invocation_id, emitted, trace)
+                        .await
+                }
+                AgentKind::Parallel if !agent.sub_agents.is_empty() => {
+                    self.run_children_once(agent, context, session, invocation_id, emitted, trace)
+                        .await
+                }
+                AgentKind::Loop { max_iterations } if !agent.sub_agents.is_empty() => {
+                    let mut iteration = 0_u32;
+                    loop {
+                        if *max_iterations != 0 && iteration >= *max_iterations {
+                            break Ok(NodeOutcome::done(FinishReason::MaxIterations));
+                        }
+                        iteration += 1;
+                        let before = emitted.len();
+                        let outcome = self
+                            .run_children_once(
+                                agent,
+                                context,
+                                session,
+                                invocation_id.clone(),
+                                emitted,
+                                trace,
+                            )
+                            .await?;
+                        if outcome.is_suspended() {
+                            break Ok(outcome);
+                        }
+                        // Stop as soon as a child escalates in this iteration.
+                        if has_escalation(&emitted[before..]) {
+                            break Ok(NodeOutcome::done(FinishReason::Stop));
+                        }
+                    }
+                }
+                // Llm, or a workflow kind with no sub-agents: a single cycle.
+                _ => {
+                    self.run_agent_with_handoffs(
+                        agent,
+                        context,
+                        session,
+                        invocation_id,
+                        emitted,
+                        trace,
+                    )
+                    .await
+                }
+            }
+        })
+    }
+
+    /// Run every sub-agent of `parent` once, in declaration order, recursing so
+    /// a child can itself be a workflow agent. Short-circuits on suspension.
+    async fn run_children_once(
+        &self,
+        parent: &Agent,
+        context: &mut InvocationContext,
+        session: &mut Session,
+        invocation_id: InvocationId,
+        emitted: &mut Vec<Event>,
+        trace: &mut RunTrace,
+    ) -> Result<NodeOutcome, RunError> {
+        let mut last = NodeOutcome::done(FinishReason::Stop);
+        for child in &parent.sub_agents {
+            last = self
+                .run_node(
+                    child,
+                    context,
+                    session,
+                    invocation_id.clone(),
+                    emitted,
+                    trace,
+                )
+                .await?;
+            if last.is_suspended() {
+                return Ok(last);
+            }
+        }
+        Ok(last)
+    }
+
+    /// Run a single agent through one or more LLM cycles, following any
+    /// model-driven `transfer_to_agent` handoffs across the agent tree.
+    async fn run_agent_with_handoffs<'a>(
+        &'a self,
+        agent: &'a Agent,
+        context: &mut InvocationContext,
+        session: &mut Session,
+        invocation_id: InvocationId,
+        emitted: &mut Vec<Event>,
+        trace: &mut RunTrace,
+    ) -> Result<NodeOutcome, RunError> {
+        let mut current_agent = agent;
+        loop {
+            let outcome = self
+                .run_llm_cycle(current_agent, context, session, invocation_id.clone())
+                .await?;
+            emitted.extend(outcome.events);
+            trace.steps.extend(outcome.trace_steps);
+            match outcome.next_agent {
+                Some(next_agent) => current_agent = next_agent,
+                None => {
+                    return Ok(match outcome.pending_approval {
+                        Some(pending) => NodeOutcome::suspended(pending),
+                        None => NodeOutcome::done(outcome.finish_reason),
+                    });
+                }
+            }
+        }
     }
 }

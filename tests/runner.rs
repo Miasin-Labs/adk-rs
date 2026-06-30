@@ -8,6 +8,7 @@ use adk_rs::{
     EventActions,
     EventAuthor,
     EventPart,
+    FinishReason,
     InMemorySessionStore,
     InvocationContext,
     InvocationId,
@@ -124,6 +125,30 @@ impl LanguageModel for StageModel {
             text: Some(format!("{} saw {} events", self.label, request.events.len())),
             tool_calls: Vec::new(),
             actions: EventActions::default(),
+        })
+    }
+}
+
+/// Counts how many times it runs and escalates (loop-stop) once it reaches
+/// `escalate_at`, so a test can prove `Loop` repeats until escalation.
+struct EscalateAfterModel {
+    runs: Mutex<usize>,
+    escalate_at: usize,
+}
+
+#[async_trait]
+impl LanguageModel for EscalateAfterModel {
+    async fn generate(&self, _request: ModelRequest) -> Result<ModelResponse, ModelError> {
+        let mut runs = self.runs.lock().unwrap();
+        *runs += 1;
+        let escalate = *runs >= self.escalate_at;
+        Ok(ModelResponse {
+            text: Some(format!("iteration {}", *runs)),
+            tool_calls: Vec::new(),
+            actions: EventActions {
+                escalate: if escalate { Some(true) } else { None },
+                ..EventActions::default()
+            },
         })
     }
 }
@@ -344,6 +369,153 @@ async fn runner_runs_sequential_sub_agents_in_order_normal() {
     assert!(stage_texts[0].1.starts_with("scope saw 1 events"));
     assert!(stage_texts[1].1.starts_with("analyze saw 2 events"));
     assert!(stage_texts[2].1.starts_with("report saw 3 events"));
+}
+
+#[tokio::test]
+async fn runner_runs_parallel_sub_agents_each_once_normal() {
+    let branch_a = AgentBuilder::new(
+        AgentName::new("branch_a").unwrap(),
+        "branch a",
+        Arc::new(StageModel { label: "a" }),
+    )
+    .build()
+    .unwrap();
+    let branch_b = AgentBuilder::new(
+        AgentName::new("branch_b").unwrap(),
+        "branch b",
+        Arc::new(StageModel { label: "b" }),
+    )
+    .build()
+    .unwrap();
+    let branch_c = AgentBuilder::new(
+        AgentName::new("branch_c").unwrap(),
+        "branch c",
+        Arc::new(StageModel { label: "c" }),
+    )
+    .build()
+    .unwrap();
+
+    let fanout = AgentBuilder::new(
+        AgentName::new("fanout").unwrap(),
+        "run branches in parallel",
+        Arc::new(PanicModel), // the parent model must never be called
+    )
+    .parallel()
+    .sub_agent(branch_a)
+    .sub_agent(branch_b)
+    .sub_agent(branch_c)
+    .build()
+    .unwrap();
+
+    let runner = Runner::new(InMemorySessionStore::default(), fanout);
+    let output = runner
+        .run(
+            &SessionId::new("par").unwrap(),
+            InvocationId::new("i-par").unwrap(),
+            "do the work",
+        )
+        .await
+        .unwrap();
+
+    let branches: Vec<String> = output
+        .events
+        .iter()
+        .filter_map(|event| match &event.author {
+            EventAuthor::Agent(name) => Some(name.as_str().to_owned()),
+            _ => None,
+        })
+        .collect();
+    // Every branch ran exactly once, in declaration order.
+    assert_eq!(branches, vec!["branch_a", "branch_b", "branch_c"]);
+}
+
+#[tokio::test]
+async fn runner_loops_sub_agent_until_escalation_normal() {
+    let worker = AgentBuilder::new(
+        AgentName::new("worker").unwrap(),
+        "retry until good enough",
+        Arc::new(EscalateAfterModel {
+            runs: Mutex::new(0),
+            escalate_at: 3,
+        }),
+    )
+    .build()
+    .unwrap();
+
+    let loop_agent = AgentBuilder::new(
+        AgentName::new("retry_loop").unwrap(),
+        "loop the worker",
+        Arc::new(PanicModel), // parent model must never be called
+    )
+    .loop_agent(10)
+    .sub_agent(worker)
+    .build()
+    .unwrap();
+
+    let runner = Runner::new(InMemorySessionStore::default(), loop_agent);
+    let output = runner
+        .run(
+            &SessionId::new("loop").unwrap(),
+            InvocationId::new("i-loop").unwrap(),
+            "go",
+        )
+        .await
+        .unwrap();
+
+    let iterations: Vec<String> = output
+        .events
+        .iter()
+        .filter_map(|event| match (&event.author, event.parts.first()) {
+            (EventAuthor::Agent(_), Some(EventPart::Text(text))) => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    // Ran exactly 3 times, stopping the iteration that escalated.
+    assert_eq!(iterations, vec!["iteration 1", "iteration 2", "iteration 3"]);
+    assert_eq!(output.finish_reason, FinishReason::Stop);
+}
+
+#[tokio::test]
+async fn runner_loops_stop_at_max_iterations_robust() {
+    // Never escalates, so the loop must stop at max_iterations.
+    let worker = AgentBuilder::new(
+        AgentName::new("worker").unwrap(),
+        "never satisfied",
+        Arc::new(EscalateAfterModel {
+            runs: Mutex::new(0),
+            escalate_at: 999,
+        }),
+    )
+    .build()
+    .unwrap();
+
+    let loop_agent = AgentBuilder::new(
+        AgentName::new("bounded_loop").unwrap(),
+        "loop the worker",
+        Arc::new(PanicModel),
+    )
+    .loop_agent(2)
+    .sub_agent(worker)
+    .build()
+    .unwrap();
+
+    let runner = Runner::new(InMemorySessionStore::default(), loop_agent);
+    let output = runner
+        .run(
+            &SessionId::new("loop-max").unwrap(),
+            InvocationId::new("i-loop-max").unwrap(),
+            "go",
+        )
+        .await
+        .unwrap();
+
+    let count = output
+        .events
+        .iter()
+        .filter(|event| matches!(&event.author, EventAuthor::Agent(_)))
+        .count();
+    assert_eq!(count, 2);
+    assert_eq!(output.finish_reason, FinishReason::MaxIterations);
 }
 
 #[tokio::test]

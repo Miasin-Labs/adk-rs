@@ -158,18 +158,24 @@ actions when the model hands off to a sub-agent.
 
 ## Workflow agents
 
-An agent's `AgentKind` controls orchestration:
+An agent's `AgentKind` controls orchestration. All workflow kinds run their
+`sub_agents` over the one shared session:
 
 - **`Llm`** (default): a single agent that may hand off to a sub-agent when its
   model emits a `transfer_to_agent` action (see `handoff_agents`).
-- **`Sequential`**: the runner executes the agent's `sub_agents` in declaration
-  order over one shared session, so each stage sees the previous stages' output
-  (see `sequential_workflow`). The model-driven `transfer_to_agent` still takes
-  precedence if a stage requests one.
+- **`Sequential`**: runs the `sub_agents` in declaration order, so each stage
+  sees the previous stages' output (see `sequential_workflow`).
+- **`Parallel`**: runs each sub-agent as an independent branch with no data
+  dependency between branches, fanning their results back into the session.
+- **`Loop { max_iterations }`**: re-runs the sub-agent pipeline until a child
+  emits an `escalate` action or `max_iterations` is reached.
 
-Build a sequential pipeline with `AgentBuilder::sequential()` plus
-`.sub_agent(..)` calls. (The flat `AgentSpec` over MCP describes a single agent,
-so author multi-stage pipelines through the library or `AgentBlueprint`.)
+Build these with `AgentBuilder::sequential()` / `.parallel()` /
+`.loop_agent(n)` plus `.sub_agent(..)` calls. A workflow kind with no
+sub-agents degrades to a single LLM cycle, and a model-driven
+`transfer_to_agent` still takes precedence within any stage. (The flat
+`AgentSpec` over MCP describes a single agent, so author multi-stage pipelines
+through the library or `AgentBlueprint`.)
 
 ## Example map
 
