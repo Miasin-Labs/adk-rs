@@ -1,5 +1,6 @@
 pub mod a2a;
 pub mod agent;
+pub mod anthropic;
 pub mod app;
 pub mod approval;
 pub mod artifact;
@@ -12,6 +13,7 @@ pub mod eval;
 pub mod event;
 pub mod fallback_model;
 pub mod file_store;
+pub mod gemini;
 pub mod guardrail;
 pub mod http_tool;
 pub mod ids;
@@ -48,7 +50,10 @@ pub mod visual_builder;
 pub mod workflow;
 pub mod workflow_runtime;
 
-pub use a2a::{A2aAgentCard, A2aError, A2aMessage, A2aTransport, RemoteA2aAgent};
+pub use a2a::{
+    A2aAgentCard, A2aError, A2aMessage, A2aTransport, HttpA2aTransport, RemoteA2aAgent,
+};
+pub use anthropic::{AnthropicConfig, AnthropicModel};
 pub use agent::{Agent, AgentBuilder, AgentError, AgentKind};
 pub use app::App;
 pub use approval::{ApprovalError, PendingApproval, ResumeDecision};
@@ -84,6 +89,7 @@ pub use environment::{Environment, EnvironmentError, LocalEnvironment};
 pub use eval::{EvalCase, EvalMetric, EvalResult, EvalService, InMemoryEvalService};
 pub use event::{Event, EventActions, EventAuthor, EventPart};
 pub use fallback_model::FallbackLanguageModel;
+pub use gemini::{GeminiConfig, GeminiModel};
 pub use file_store::{FileArtifactService, FileEvalService, FileSessionStore};
 pub use guardrail::{
     Guardrail, GuardrailDecision, GuardrailError, GuardrailPhase, KeywordGuardrail, PiiGuardrail,
@@ -156,4 +162,4 @@ pub use tool_declaration::{FunctionDeclaration, ToolArgsConfig, ToolConfig, Tool
 pub use toolset::Toolset;
 pub use visual_builder::{AgentBlueprint, BlueprintFormat, VisualAgentBuilder, VisualBuilderError};
 pub use workflow::{WorkflowEdge, WorkflowError, WorkflowGraph, WorkflowNode, WorkflowNodeKind};
-pub use workflow_runtime::{WorkflowRuntime, WorkflowRuntimeError};
+pub use workflow_runtime::{NodeHandler, WorkflowRuntime, WorkflowRuntimeError};
