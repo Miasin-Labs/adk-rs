@@ -21,7 +21,7 @@ Upstream reference checkout: `/tmp/adk-python` at commit `065f4ae`.
 | `BasePlugin` | `src/google/adk/plugins/base_plugin.py` | `src/plugin.rs` and `src/runner/plugins.rs` port user/run/event/model/tool callback hooks |
 | `BaseTool` / function tools | `src/google/adk/tools/base_tool.py`, `src/google/adk/tools/function_tool.py` | `src/tool.rs` ports tool spec/call/result and async trait boundary |
 | `BaseLlm` / LLM request/response | `src/google/adk/models/` | `src/model.rs` ports provider-agnostic request/response and async language-model trait |
-| Model adapters/catalog | `src/google/adk/models/anthropic_llm.py`, `google_llm.py`, `lite_llm.py`, `gemma_llm.py`, `registry.py` | `src/model.rs` ports provider/capability metadata for Gemini, Vertex AI, Anthropic, OpenAI-compatible, LiteLLM, Apigee, Gemma, and custom adapters |
+| Model adapters/catalog | `src/google/adk/models/anthropic_llm.py`, `google_llm.py`, `lite_llm.py`, `gemma_llm.py`, `registry.py` | `src/model.rs` ports provider/capability *metadata* (`ModelSpec`) for Gemini, Vertex AI, Anthropic, OpenAI-compatible, LiteLLM, Apigee, Gemma, and custom. The only *working* adapter is `OpenAiCompatibleModel` (`openai_compatible.rs`); native Gemini/Anthropic adapters are not yet implemented. |
 | Tool catalog | `src/google/adk/tools/` | `src/tool.rs` ports built-in tool-kind coverage and registry/spec lookup for agent, API Hub, app integration, authenticated function, Bash, BigQuery, Bigtable, computer use, data-agent, search, OpenAPI, MCP, retrieval, Pub/Sub, Spanner, toolbox, transfer, URL context, Vertex AI search, memory/artifact tools, and more |
 | Auth / credentials | `src/google/adk/auth/` | `src/auth.rs` ports auth schemes, credentials, and user/app-scoped credential service |
 | A2A | `src/google/adk/a2a/` | `src/a2a.rs` ports agent cards, messages, remote agent wrapper, and transport trait |
@@ -37,19 +37,58 @@ Upstream reference checkout: `/tmp/adk-python` at commit `065f4ae`.
 | Environment/platform | `src/google/adk/environment/`, `platform/` | `src/environment.rs` and `src/platform.rs` port environment, clock, and UUID generation traits |
 | CLI/API server shapes | `src/google/adk/cli/` | `src/cli.rs` and `src/server.rs` port command and route shapes for run, web, API server, eval, create, deploy, artifacts, sessions, SSE, and live |
 
-## Deferred parity
+## Parity status (audited)
 
-- Concrete workflow node execution scheduler
-- Bidirectional audio/video streaming model adapters
-- Auth and credential manager
-- A2A conversion and executor layer
-- File/GCS artifact backends
-- Database/cloud session backends
-- Full Gemini model adapter
-- CLI and eval/conformance tooling
+The crate ports most ADK Python *types*, but many are **declaration-only**:
+the trait/struct exists and is unit-tested, yet the `Runner` never invokes it.
+The list below reflects what the execution loop actually drives, not just what
+compiles. (Evidence: `Runner` imports only `agent`, `session`, `invocation`,
+`tool`, `event`, `approval`, `model`, `guardrail`, `structured_output`,
+`plugin`, `auth`, `run_config`, `run_trace`, `app`.)
 
-## Frontend direction
+### Functional (driven by the runtime)
 
-adk-rs is a self-contained runtime with no bundled web frontend. Agents are
-driven directly through the core library, the `adk-cli` inspection helper, and
-the `adk-mcp` MCP server (typed agents created from JSON or YAML specs).
+- Typed agents and the agent tree (`agent.rs`).
+- Workflow execution for all `AgentKind`s — `Sequential`, `Parallel`
+  (isolated + concurrent), `Loop` (until escalate / max-iterations) — plus
+  model-driven `transfer_to_agent` handoff (`runner.rs`).
+- Tools, tool approval (suspend/resume), and the `HttpTool` (`tool.rs`,
+  `runner/cycle.rs`, `http_tool.rs`).
+- `OpenAiCompatibleModel` and `FallbackLanguageModel` (`openai_compatible.rs`,
+  `fallback_model.rs`).
+- Sessions (in-memory + file), artifacts (in-memory + file), structured
+  output, guardrails, credential lookup, and a per-run memory **window**
+  (event truncation, `run_config.memory_window_events`).
+
+### Declaration-only (types exist; runtime does not call them yet)
+
+- `MemoryService` retrieval — the runner truncates recent events but never
+  searches/injects retrieved memory (RAG). `memory_window_events` is *not*
+  `MemoryService`.
+- `TelemetrySink` — no spans are emitted during a run.
+- `Planner` (`build_plan`) — never invoked by the runner.
+- `CodeExecutor` — trait only; no executor is wired in and no built-in impl
+  ships.
+- `WorkflowRuntime` — `run_from_roots` returns BFS visitation order only; it
+  does not execute nodes (agent execution lives on `AgentKind`, not this graph).
+- `A2A` (`RemoteA2aAgent`, `A2aTransport`) — types only, no live transport.
+- Streaming / live — `StreamingResponseAggregator`, `LiveRequestQueue`, and
+  `LiveMediaAdapter` exist, but `Runner` exposes only a non-streaming `run`;
+  there is no `Runner::stream`.
+- `Optimizer`, `SkillRegistry` (skills not injected into model context),
+  `EvalService` / `metric` evaluators (not run post-turn), and
+  `replay`/`Recording` (route shape only).
+
+### Genuinely missing (no type yet)
+
+- Native Gemini / Anthropic model adapters (only OpenAI-compatible exists).
+- Encrypted / OS-keyring credential storage (files are plaintext JSON).
+- Database or cloud session/artifact backends (in-memory + local file only).
+
+## Frontend direction (intentional non-goal)
+
+A web/dev UI is **deliberately out of scope** — the upstream ADK web app and
+the earlier in-repo editor experiment were removed by choice. adk-rs is a
+self-contained runtime driven through the core library, the `adk-cli`
+inspection helper, and the `adk-mcp` MCP server (typed agents authored as JSON
+or YAML specs). UI parity is not tracked as a gap.

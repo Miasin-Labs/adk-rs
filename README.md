@@ -222,7 +222,14 @@ instead of executing the tool. Call `Runner::resume_tool_call` with
 ## Current status
 
 This repository is a working Rust foundation, not a complete Python ADK clone.
-The core typed surfaces are present, including agents, sessions, tools, model
-requests, events, memory, artifacts, evals, telemetry, live request queues,
-workflow graphs, and CLI/MCP shapes. See `PORTING.md` for the remaining parity
-gaps.
+What the runtime actually *executes* today: typed agents; `Sequential`,
+`Parallel`, and `Loop` workflow agents plus model-driven handoff; tools and
+tool approval; the OpenAI-compatible model adapter with fallback; sessions and
+artifacts (in-memory + file); structured output; and guardrails.
+
+Many other ADK surfaces are present as typed shapes but are **declaration-only**
+— defined and unit-tested, yet not yet invoked by the `Runner` (e.g.
+`MemoryService` retrieval, `TelemetrySink`, `Planner`, `CodeExecutor`,
+`WorkflowRuntime` node execution, A2A, and streaming/live). A web UI is an
+intentional non-goal. See `PORTING.md` for the audited functional /
+declaration-only / missing breakdown.
