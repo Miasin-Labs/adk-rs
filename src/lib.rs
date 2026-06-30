@@ -129,7 +129,7 @@ pub use prompt::AgentPrompt;
 pub use replay::{InMemoryRecordingStore, Recording, RecordingError, RecordingStore, ReplayCursor};
 pub use run_config::{RunConfig, StreamingMode};
 pub use run_trace::{FinishReason, RunTrace, RunTraceStep};
-pub use runner::{RunError, RunOutput, Runner};
+pub use runner::{RunError, RunOutput, RunStream, RunStreamItem, Runner};
 pub use server::{ApiRoute, DevServerConfig};
 pub use session::{InMemorySessionStore, Session, SessionError, SessionStore};
 pub use skills::{Skill, SkillRegistry};

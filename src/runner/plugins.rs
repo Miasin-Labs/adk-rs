@@ -91,6 +91,11 @@ impl<S: SessionStore> Runner<S> {
             event = plugin.on_event(context, event).await?;
         }
         session.append(event.clone());
+        // Forward to the streaming sink, if `Runner::stream` is driving this run.
+        // A closed receiver (dropped stream consumer) is not an error.
+        if let Some(sink) = &context.event_sink {
+            let _ = sink.send(event.clone());
+        }
         Ok(event)
     }
 }

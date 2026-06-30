@@ -37,7 +37,7 @@ impl<S: SessionStore> Runner<S> {
             iterations += 1;
             context.increment_llm_call_count()?;
             let request = ModelRequest {
-                instruction: agent.instruction.clone(),
+                instruction: context.apply_preamble(&agent.instruction),
                 events: request_events(&session.events, self.run_config.memory_window_events),
                 tools: agent.tools.iter().map(|tool| tool.spec()).collect(),
             };

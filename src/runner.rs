@@ -2,6 +2,7 @@ mod context;
 mod cycle;
 mod plugins;
 mod resume;
+mod stream;
 mod types;
 
 use std::collections::BTreeMap;
@@ -15,12 +16,18 @@ use crate::event::{Event, EventActions, EventAuthor, EventPart};
 use crate::guardrail::{GuardrailPhase, enforce_guardrails};
 use crate::ids::{AgentName, EventId, InvocationId, SessionId};
 use crate::invocation::InvocationContext;
+use crate::memory::MemoryService;
+use crate::metric::{MetricEvaluation, MetricEvaluator};
+use crate::planner::Planner;
 use crate::plugin::Plugin;
 use crate::run_config::RunConfig;
 use crate::run_trace::{FinishReason, RunTrace};
+pub use crate::runner::stream::{RunStream, RunStreamItem};
 pub use crate::runner::types::{RunError, RunOutput};
 use crate::session::{Session, SessionStore};
+use crate::skills::SkillRegistry;
 use crate::structured_output::parse_structured_output;
+use crate::telemetry::{TelemetrySink, TelemetrySpan};
 use crate::tool::{ToolCall, ToolResult};
 
 pub struct Runner<S: SessionStore> {
@@ -30,6 +37,11 @@ pub struct Runner<S: SessionStore> {
     run_config: RunConfig,
     credential_service: Option<Arc<dyn CredentialService>>,
     pending_approvals: Arc<Mutex<BTreeMap<String, PendingApproval>>>,
+    telemetry: Option<Arc<dyn TelemetrySink>>,
+    memory: Option<Arc<dyn MemoryService>>,
+    skills: Option<Arc<SkillRegistry>>,
+    planner: Option<Arc<dyn Planner>>,
+    metrics: Vec<Arc<dyn MetricEvaluator + Send + Sync>>,
 }
 
 impl<S: SessionStore> Runner<S> {
@@ -41,6 +53,11 @@ impl<S: SessionStore> Runner<S> {
             run_config: RunConfig::default(),
             credential_service: None,
             pending_approvals: Arc::default(),
+            telemetry: None,
+            memory: None,
+            skills: None,
+            planner: None,
+            metrics: Vec::new(),
         }
     }
 
@@ -52,6 +69,11 @@ impl<S: SessionStore> Runner<S> {
             run_config: RunConfig::default(),
             credential_service: None,
             pending_approvals: Arc::default(),
+            telemetry: None,
+            memory: None,
+            skills: None,
+            planner: None,
+            metrics: Vec::new(),
         }
     }
 
@@ -70,22 +92,74 @@ impl<S: SessionStore> Runner<S> {
         self
     }
 
+    /// Record a telemetry span per model call (and one for the whole run).
+    pub fn telemetry(mut self, sink: Arc<dyn TelemetrySink>) -> Self {
+        self.telemetry = Some(sink);
+        self
+    }
+
+    /// Search this memory service with the user input and inject retrieved
+    /// entries into the model instruction before the loop (RAG retrieval).
+    pub fn memory(mut self, service: Arc<dyn MemoryService>) -> Self {
+        self.memory = Some(service);
+        self
+    }
+
+    /// Inject the registered skills' prompts into the model instruction.
+    pub fn skills(mut self, registry: Arc<SkillRegistry>) -> Self {
+        self.skills = Some(registry);
+        self
+    }
+
+    /// Build a plan from the user input before the loop and inject its steps
+    /// into the model instruction.
+    pub fn planner(mut self, planner: Arc<dyn Planner>) -> Self {
+        self.planner = Some(planner);
+        self
+    }
+
+    /// Evaluate the final output against this metric after the run; results are
+    /// returned on `RunOutput.metrics`.
+    pub fn metric(mut self, evaluator: Arc<dyn MetricEvaluator + Send + Sync>) -> Self {
+        self.metrics.push(evaluator);
+        self
+    }
+
     pub async fn run(
         &self,
         session_id: &SessionId,
         invocation_id: InvocationId,
         input: impl Into<String>,
     ) -> Result<RunOutput, RunError> {
+        self.run_inner(session_id.clone(), invocation_id, input.into(), None)
+            .await
+    }
+
+    /// Shared run path for `run` and `stream`. When `event_sink` is set, every
+    /// emitted event is also forwarded to it as the run produces it.
+    async fn run_inner(
+        &self,
+        session_id: SessionId,
+        invocation_id: InvocationId,
+        input: String,
+        event_sink: Option<tokio::sync::mpsc::UnboundedSender<Event>>,
+    ) -> Result<RunOutput, RunError> {
         let mut session = self
             .store
-            .load(session_id)?
+            .load(&session_id)?
             .unwrap_or_else(|| Session::new(session_id.clone()));
         let mut context =
             InvocationContext::new(&session, invocation_id.clone(), self.agent.name.clone())
                 .with_run_config(self.run_config.clone());
+        context.event_sink = event_sink;
         self.before_run(&context).await?;
-        let input = self.on_user_message(&context, input.into()).await?;
+        let input = self.on_user_message(&context, input).await?;
         enforce_guardrails(&self.run_config.guardrails, GuardrailPhase::Input, &input)?;
+
+        // Build the run-level instruction preamble from planner + retrieved
+        // memory + skills, so every model call in this run sees it.
+        context.instruction_preamble = self.build_preamble(&context, &input).await?;
+
         let user_event = self
             .emit_event(
                 &context,
@@ -116,6 +190,33 @@ impl<S: SessionStore> Runner<S> {
         trace.finish_reason = finish_reason;
         let structured_output =
             parse_structured_output(&emitted, self.run_config.structured_output_schema.as_ref())?;
+
+        // Emit a telemetry span for the whole run, counting model calls.
+        if let Some(sink) = &self.telemetry {
+            let model_calls = trace
+                .steps
+                .iter()
+                .filter(|step| matches!(step, crate::run_trace::RunTraceStep::ModelCall { .. }))
+                .count();
+            let span = TelemetrySpan {
+                name: format!("run:{}", self.agent.name.as_str()),
+                trace_id: invocation_id.as_str().to_owned(),
+                token_usage: None,
+            };
+            sink.record_span(span)?;
+            // One span per model call, so call count is observable downstream.
+            for _ in 1..model_calls {
+                sink.record_span(TelemetrySpan {
+                    name: format!("model_call:{}", self.agent.name.as_str()),
+                    trace_id: invocation_id.as_str().to_owned(),
+                    token_usage: None,
+                })?;
+            }
+        }
+
+        // Post-turn metric evaluation against the final output text.
+        let metrics = self.evaluate_metrics(&emitted);
+
         self.store.save(session)?;
         self.after_run(&context).await?;
         Ok(RunOutput {
@@ -125,8 +226,99 @@ impl<S: SessionStore> Runner<S> {
             trace,
             structured_output,
             pending_approval,
+            metrics,
         })
     }
+
+    /// Assemble the run-level instruction preamble from the planner, retrieved
+    /// memory, and registered skills (each optional).
+    async fn build_preamble(
+        &self,
+        context: &InvocationContext,
+        input: &str,
+    ) -> Result<String, RunError> {
+        let mut sections: Vec<String> = Vec::new();
+
+        if let Some(planner) = &self.planner {
+            let plan = planner.build_plan(context, input).await?;
+            if !plan.steps.is_empty() {
+                let steps = plan
+                    .steps
+                    .iter()
+                    .enumerate()
+                    .map(|(i, step)| format!("{}. {}", i + 1, step.description))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                sections.push(format!("Plan:\n{steps}"));
+            }
+        }
+
+        if let Some(memory) = &self.memory {
+            let hits = memory.search_memory(&context.app_name, &context.user_id, input)?;
+            if !hits.is_empty() {
+                let recalled = hits
+                    .iter()
+                    .map(|entry| format!("- {}", entry.text))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                sections.push(format!("Relevant memory:\n{recalled}"));
+            }
+        }
+
+        if let Some(skills) = &self.skills {
+            let listed = skills.list();
+            if !listed.is_empty() {
+                let rendered = listed
+                    .iter()
+                    .map(|skill| format!("- {}: {}", skill.name, skill.prompt))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                sections.push(format!("Available skills:\n{rendered}"));
+            }
+        }
+
+        Ok(sections.join("\n\n"))
+    }
+
+    /// Evaluate the run's final output text against the configured metrics.
+    fn evaluate_metrics(&self, emitted: &[Event]) -> Vec<MetricEvaluation> {
+        if self.metrics.is_empty() {
+            return Vec::new();
+        }
+        let actual = final_agent_text(emitted);
+        let actual_tools = emitted
+            .iter()
+            .flat_map(|event| event.parts.iter())
+            .filter_map(|part| match part {
+                EventPart::ToolCall(call) => Some(call.name.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let input = crate::metric::MetricInput {
+            expected: String::new(),
+            actual,
+            expected_tools: Vec::new(),
+            actual_tools,
+            forbidden_terms: Vec::new(),
+            grounded_terms: Vec::new(),
+        };
+        self.metrics
+            .iter()
+            .map(|metric| metric.evaluate(&input))
+            .collect()
+    }
+}
+
+/// The final agent text event in a run, if any (reverse scan).
+fn final_agent_text(events: &[Event]) -> String {
+    events
+        .iter()
+        .rev()
+        .find_map(|event| match (&event.author, event.parts.first()) {
+            (EventAuthor::Agent(_), Some(EventPart::Text(text))) => Some(text.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 fn tool_event(invocation_id: InvocationId, result: ToolResult) -> Event {

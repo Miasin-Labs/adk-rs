@@ -61,6 +61,7 @@ impl<S: SessionStore> Runner<S> {
             trace,
             structured_output: None,
             pending_approval: None,
+            metrics: Vec::new(),
         })
     }
 }

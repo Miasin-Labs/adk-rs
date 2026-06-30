@@ -59,6 +59,8 @@ pub struct RunOutput {
     pub trace: RunTrace,
     pub structured_output: Option<Value>,
     pub pending_approval: Option<PendingApproval>,
+    /// Post-turn metric evaluations, if any `MetricEvaluator`s were configured.
+    pub metrics: Vec<crate::metric::MetricEvaluation>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -79,6 +81,12 @@ pub enum RunError {
     Guardrail(#[from] GuardrailError),
     #[error(transparent)]
     Approval(#[from] ApprovalError),
+    #[error(transparent)]
+    Telemetry(#[from] crate::telemetry::TelemetryError),
+    #[error(transparent)]
+    Memory(#[from] crate::memory::MemoryError),
+    #[error(transparent)]
+    Planner(#[from] crate::planner::PlannerError),
     #[error("unknown tool {0}")]
     UnknownTool(String),
     #[error("unknown agent {0:?}")]
