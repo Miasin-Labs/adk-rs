@@ -1,0 +1,19 @@
+# An adk-mcp AgentSpec (NOT a CLI AgentBlueprint): demonstrates structured
+# output. Consume it via the MCP server:
+#   create_agent_from_file { "path": "examples/agents/kalamazoo_picker.yaml" }
+# When run, the agent's final reply is parsed as JSON and validated against
+# `output_schema`, then returned as run_agent's `structured_output`.
+name: kalamazoo_picker
+model: gpt-4o
+tools:
+  - http_request
+instructions: |
+  Fetch the Kalamazoo, MI 3-day forecast from Open-Meteo via http_request (GET):
+    https://api.open-meteo.com/v1/forecast?latitude=42.2917&longitude=-85.5872&daily=weather_code,temperature_2m_max,precipitation_probability_max&temperature_unit=fahrenheit&timezone=auto&forecast_days=3
+  Then reply with ONLY a JSON object of this exact shape - no prose, no markdown:
+    {"best_day": "<ISO date>", "activities": ["<string>", "<string>", "<string>"]}
+  Choose best_day as the day with the warmest-but-comfortable high and lowest
+  precipitation probability, and list 3 activities fitting that day's weather.
+output_schema:
+  type: object
+  required: [best_day, activities]

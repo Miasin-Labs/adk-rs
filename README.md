@@ -64,6 +64,24 @@ kind:
   type: llm                  # llm (default) | sequential | parallel | loop
 ```
 
+### Structured output
+
+Add an optional `output_schema` (a JSON Schema) to an `AgentSpec` to make an
+agent return validated JSON. When set, `run_agent` parses the agent's final
+reply as JSON, checks it against the schema, and returns the parsed value as
+`structured_output` (see `examples/agents/kalamazoo_picker.yaml`):
+
+```yaml
+name: kalamazoo_picker
+instructions: |
+  Reply with ONLY a JSON object: {"best_day": <ISO date>, "activities": [<string>, ...]}.
+model: gpt-4o
+tools: [http_request]
+output_schema:
+  type: object
+  required: [best_day, activities]
+```
+
 ### Over MCP
 
 `crates/adk-mcp` is a standalone MCP server that lets any MCP client create,

@@ -281,6 +281,7 @@ impl AdkMcp {
             description: req.description.unwrap_or_default(),
             tools: req.tools.unwrap_or_default(),
             kind: req.kind.unwrap_or_default(),
+            output_schema: None,
             created_at: now,
             updated_at: now,
         };
@@ -437,8 +438,14 @@ impl AdkMcp {
             return Err("OPENAI_API_KEY is not set; cannot run agents".into());
         }
         let agent = self.build_agent(&spec)?;
-        let mut runner =
-            Runner::new(self.sessions.clone(), agent).with_run_config(RunConfig::default());
+        let run_config = RunConfig {
+            structured_output_schema: spec
+                .output_schema
+                .clone()
+                .map(adk_rs::StructuredOutputSchema::new),
+            ..RunConfig::default()
+        };
+        let mut runner = Runner::new(self.sessions.clone(), agent).with_run_config(run_config);
         // When the client supplies a progress token, stream the run's events
         // back as `notifications/progress`.
         if let Some((_, raw)) = context.meta.get_key_value("progressToken")

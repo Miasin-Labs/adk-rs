@@ -47,6 +47,11 @@ pub struct AgentSpec {
     /// Agent workflow kind.
     #[serde(default)]
     pub kind: AgentKindSpec,
+    /// Optional JSON Schema. When set, the agent's final reply is parsed as
+    /// JSON and validated against this schema; the parsed value is returned as
+    /// `run_agent`'s `structured_output`. Omit for plain free-text agents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<serde_json::Value>,
     /// Unix-epoch seconds of creation.
     #[serde(default)]
     pub created_at: u64,
@@ -224,6 +229,7 @@ mod tests {
             description: "research helper".to_owned(),
             tools: vec!["http_request".to_owned(), "calculator".to_owned()],
             kind: AgentKindSpec::Loop { max_iterations: 4 },
+            output_schema: None,
             created_at: 100,
             updated_at: 200,
         }
@@ -278,7 +284,28 @@ mod tests {
         assert!(spec.model.is_empty());
         assert!(spec.tools.is_empty());
         assert_eq!(spec.kind, AgentKindSpec::Llm);
+        assert!(spec.output_schema.is_none());
         assert_eq!(spec.created_at, 0);
+    }
+
+    #[test]
+    fn output_schema_parses_and_round_trips_normal() {
+        let yaml = r#"
+        name: picker
+        instructions: Reply with JSON.
+        output_schema:
+          type: object
+          required: [best_day, activities]
+        "#;
+        let spec = AgentSpec::parse(yaml, SpecFormat::Yaml).unwrap();
+        let schema = spec.output_schema.as_ref().expect("schema present");
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["required"][0], "best_day");
+        // Round-trips through both formats unchanged.
+        let json = spec.to_json_string().unwrap();
+        assert_eq!(AgentSpec::parse(&json, SpecFormat::Json).unwrap(), spec);
+        let yaml_out = spec.to_yaml_string().unwrap();
+        assert_eq!(AgentSpec::parse(&yaml_out, SpecFormat::Yaml).unwrap(), spec);
     }
 
     #[test]
