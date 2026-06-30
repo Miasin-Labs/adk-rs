@@ -55,6 +55,8 @@ pub enum SessionError {
     Io { source: std::io::Error },
     #[error("session store JSON failed")]
     Json { source: serde_json::Error },
+    #[error("session store database error: {message}")]
+    Db { message: String },
 }
 
 pub trait SessionStore: Send + Sync {

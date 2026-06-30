@@ -67,6 +67,8 @@ pub enum ArtifactError {
     Io { source: std::io::Error },
     #[error("artifact store JSON failed")]
     Json { source: serde_json::Error },
+    #[error("artifact store database error: {message}")]
+    Db { message: String },
 }
 
 #[derive(Debug, Default, Clone)]

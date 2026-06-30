@@ -35,6 +35,8 @@ pub mod runner;
 pub mod server;
 pub mod session;
 pub mod skills;
+#[cfg(feature = "sqlite")]
+pub mod sqlite_store;
 pub mod streaming;
 pub mod structured_output;
 pub mod telemetry;
@@ -64,6 +66,7 @@ pub use auth::{
     AuthScheme,
     CredentialManager,
     CredentialService,
+    EncryptedFileCredentialService,
     FileCredentialService,
     InMemoryCredentialService,
 };
@@ -76,7 +79,7 @@ pub use cloud::{
     DeploymentError,
     DeploymentPlan,
 };
-pub use code_executor::{CodeBlock, CodeExecutionResult, CodeExecutor, CodeExecutorError};
+pub use code_executor::{CodeBlock, CodeExecutionResult, CodeExecutor, CodeExecutorError, LocalCodeExecutor};
 pub use environment::{Environment, EnvironmentError, LocalEnvironment};
 pub use eval::{EvalCase, EvalMetric, EvalResult, EvalService, InMemoryEvalService};
 pub use event::{Event, EventActions, EventAuthor, EventPart};
@@ -133,6 +136,8 @@ pub use runner::{RunError, RunOutput, RunStream, RunStreamItem, Runner};
 pub use server::{ApiRoute, DevServerConfig};
 pub use session::{InMemorySessionStore, Session, SessionError, SessionStore};
 pub use skills::{Skill, SkillRegistry};
+#[cfg(feature = "sqlite")]
+pub use sqlite_store::{SqliteArtifactService, SqliteSessionStore};
 pub use streaming::StreamingResponseAggregator;
 pub use structured_output::{StructuredOutputError, StructuredOutputSchema};
 pub use telemetry::{InMemoryTelemetrySink, TelemetrySink, TelemetrySpan, TokenUsage};
