@@ -42,6 +42,7 @@ pub struct Runner<S: SessionStore> {
     skills: Option<Arc<SkillRegistry>>,
     planner: Option<Arc<dyn Planner>>,
     metrics: Vec<Arc<dyn MetricEvaluator + Send + Sync>>,
+    recorder: Option<(Arc<dyn crate::replay::RecordingStore>, String)>,
 }
 
 impl<S: SessionStore> Runner<S> {
@@ -58,6 +59,7 @@ impl<S: SessionStore> Runner<S> {
             skills: None,
             planner: None,
             metrics: Vec::new(),
+            recorder: None,
         }
     }
 
@@ -74,6 +76,7 @@ impl<S: SessionStore> Runner<S> {
             skills: None,
             planner: None,
             metrics: Vec::new(),
+            recorder: None,
         }
     }
 
@@ -122,6 +125,17 @@ impl<S: SessionStore> Runner<S> {
     /// returned on `RunOutput.metrics`.
     pub fn metric(mut self, evaluator: Arc<dyn MetricEvaluator + Send + Sync>) -> Self {
         self.metrics.push(evaluator);
+        self
+    }
+
+    /// Persist every event this run emits to `store` under `id` once the run
+    /// finishes, so it can later be replayed with a `ReplayModel`.
+    pub fn record_to(
+        mut self,
+        store: Arc<dyn crate::replay::RecordingStore>,
+        id: impl Into<String>,
+    ) -> Self {
+        self.recorder = Some((store, id.into()));
         self
     }
 
@@ -216,6 +230,11 @@ impl<S: SessionStore> Runner<S> {
 
         // Post-turn metric evaluation against the final output text.
         let metrics = self.evaluate_metrics(&emitted);
+
+        // Persist the run's events for later replay, if a recorder is set.
+        if let Some((store, id)) = &self.recorder {
+            store.put(id, emitted.clone())?;
+        }
 
         self.store.save(session)?;
         self.after_run(&context).await?;

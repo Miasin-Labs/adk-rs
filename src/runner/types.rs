@@ -87,6 +87,8 @@ pub enum RunError {
     Memory(#[from] crate::memory::MemoryError),
     #[error(transparent)]
     Planner(#[from] crate::planner::PlannerError),
+    #[error(transparent)]
+    Recording(#[from] crate::replay::RecordingError),
     #[error("unknown tool {0}")]
     UnknownTool(String),
     #[error("unknown agent {0:?}")]

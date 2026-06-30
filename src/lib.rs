@@ -109,7 +109,10 @@ pub use ids::{
 pub use integration::{IntegrationEndpoint, IntegrationKind, IntegrationRegistry};
 pub use invocation::{InvocationContext, InvocationError};
 pub use live::{LiveRequest, LiveRequestQueue, LiveResponse};
-pub use live_media::{InMemoryLiveMediaAdapter, LiveMediaAdapter, LiveMediaChunk, LiveMediaKind};
+pub use live_media::{
+    DuplexLiveMediaAdapter, InMemoryLiveMediaAdapter, LiveMediaAdapter, LiveMediaChunk,
+    LiveMediaKind,
+};
 pub use memory::{InMemoryMemoryService, MemoryEntry, MemoryError, MemoryService};
 pub use metric::{
     ExactMatchEvaluator,
@@ -130,12 +133,16 @@ pub use model::{
     ModelSpec,
 };
 pub use openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleModel};
-pub use optimization::{OptimizationCandidate, Optimizer, OptimizerError};
+pub use optimization::{
+    MetricGuidedOptimizer, OptimizationCandidate, Optimizer, OptimizerError, PromptVariants,
+};
 pub use planner::{Plan, PlanStep, Planner, PlannerError};
 pub use platform::{Clock, SystemClock, UuidGenerator};
 pub use plugin::{Plugin, PluginError};
 pub use prompt::AgentPrompt;
-pub use replay::{InMemoryRecordingStore, Recording, RecordingError, RecordingStore, ReplayCursor};
+pub use replay::{
+    InMemoryRecordingStore, Recording, RecordingError, RecordingStore, ReplayCursor, ReplayModel,
+};
 pub use run_config::{RunConfig, StreamingMode};
 pub use run_trace::{FinishReason, RunTrace, RunTraceStep};
 pub use runner::{RunError, RunOutput, RunStream, RunStreamItem, Runner};
