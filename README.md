@@ -2,7 +2,7 @@
 
 `adk-rs` is an early Rust port of the core Google ADK ideas: typed agents, model
 requests and responses, tool calls, sessions, artifacts, memory, metrics,
-workflow graphs, and a small local dev server.
+workflow graphs, and an MCP server for creating and running typed agents.
 
 The crate is provider-agnostic. You plug in a `LanguageModel` implementation,
 compose `Agent`s with `AgentBuilder`, attach `Tool`s when needed, and run the
@@ -26,9 +26,8 @@ tool results to the session, and let the model decide the next step.
 
 - `src/`: the core Rust library.
 - `crates/adk-cli`: local CLI helpers for route, tool, and model inspection.
-- `crates/adk-server`: a small Axum dev server that serves the real n8n editor
-  UI wired to a Rust `/rest` compatibility surface (see `docs/n8n-ui.md`).
-- `third_party/n8n-editor-ui`: copied n8n editor UI source with upstream license files.
+- `crates/adk-mcp`: an MCP server that creates, runs, and persists typed agents
+  (specs authored in JSON or YAML) for any MCP client.
 - `examples/`: simple runnable agents that do not need network credentials.
 - `docs/agents.md`: an agent cookbook with the main runtime concepts.
 - `PORTING.md`: parity notes against the Python ADK reference.
@@ -39,23 +38,56 @@ tool results to the session, and let the model decide the next step.
 cargo test
 cargo run -p adk-cli -- routes
 cargo run -p adk-cli -- tools
-cargo run -p adk-server -- --port 8091
+cargo run -p adk-cli -- spec validate agent.yaml
 ```
 
-Then open the dev server at `http://127.0.0.1:8091`.
+## Typed agents from JSON or YAML
 
-The dev server is for local development only. It is unauthenticated, uses
-permissive CORS, and may read local provider credentials such as
-`OPENAI_API_KEY`; bind it only to a trusted loopback interface and do not expose
-it on a public network.
+adk-rs agents are typed specs you can author by hand in JSON or YAML. There are
+two complementary shapes:
 
-The dev server serves the **real, verbatim n8n editor UI** (the upstream Vue
-SPA), wired to a Rust implementation of n8n's `/rest` contract. You can build
-agent workflows on the n8n canvas — a curated node catalog (ADK Agent,
-Sub-Agent, HTTP Tool, IF, Set, Code, Merge, Memory, Wait), JS expressions,
-credentials, and run/resume with live canvas animation — all driven by the
-adk-rs runner. See [`docs/n8n-ui.md`](docs/n8n-ui.md) for the architecture and
-how to rebuild the UI.
+- **`AgentSpec`** (`crates/adk-mcp`): the runnable registry record — name,
+  instructions, model, tools, and workflow kind. Persisted to disk and rebuilt
+  on every run.
+- **`AgentBlueprint`** (`src/visual_builder.rs`): a recursive design tree
+  (an agent plus nested `sub_agents`) used for sketching and graph export.
+
+Both load from `.json`, `.yaml`, or `.yml`; only the identifying fields are
+required and the rest default. A minimal `AgentSpec`:
+
+```yaml
+name: research
+instructions: Answer with sources and show your working.
+model: gpt-4o-mini          # optional; falls back to the server default
+tools: [http_request, calculator]
+kind:
+  type: llm                  # llm (default) | sequential | parallel | loop
+```
+
+### Over MCP
+
+`crates/adk-mcp` is a standalone MCP server that lets any MCP client create,
+list, run, export, and delete adk-rs agents. Relevant tools:
+
+- `create_agent` — create from individual fields.
+- `create_agent_from_spec` — create from a JSON/YAML spec document (format
+  auto-detected).
+- `create_agent_from_file` — create from a local `.json`/`.yaml`/`.yml` file.
+- `export_agent` — dump an existing agent back out as JSON or YAML.
+
+Set `OPENAI_API_KEY` (and optionally `OPENAI_BASE_URL`, `OPENAI_MODEL`) to run
+agents.
+
+### From the CLI
+
+```bash
+cargo run -p adk-cli -- spec validate agent.yaml          # parse + validate
+cargo run -p adk-cli -- spec convert agent.yaml --to json # convert formats
+```
+
+> Note: YAML support uses `serde_yaml` 0.9, which is no longer actively
+> maintained upstream. It is stable and fine for spec files today; revisit if a
+> maintained YAML crate is needed later.
 
 ## Run the example agents
 
@@ -111,8 +143,8 @@ actions when the model hands off to a sub-agent.
 - `tool_agent`: model asks Rust for deterministic work, then answers.
 - `handoff_agents`: router agent transfers work to a specialist sub-agent.
 - `react_agent`: reason-act-observe loop over search and critique tools.
-- `trail_advisor`: n8n-style personal assistant demo with local HTTP tools,
-  scoped credentials, memory-window config, and message-preview safety.
+- `trail_advisor`: personal-assistant demo with local HTTP tools, scoped
+  credentials, memory-window config, and message-preview safety.
 
 ## Real model adapters
 
@@ -143,5 +175,5 @@ instead of executing the tool. Call `Runner::resume_tool_call` with
 This repository is a working Rust foundation, not a complete Python ADK clone.
 The core typed surfaces are present, including agents, sessions, tools, model
 requests, events, memory, artifacts, evals, telemetry, live request queues,
-workflow graphs, CLI/server shapes, and a local dev UI shell. See `PORTING.md`
-for the remaining parity gaps.
+workflow graphs, and CLI/MCP shapes. See `PORTING.md` for the remaining parity
+gaps.

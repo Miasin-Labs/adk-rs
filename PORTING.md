@@ -46,8 +46,10 @@ Upstream reference checkout: `/tmp/adk-python` at commit `065f4ae`.
 - File/GCS artifact backends
 - Database/cloud session backends
 - Full Gemini model adapter
-- CLI/dev server and eval/conformance tooling
+- CLI and eval/conformance tooling
 
 ## Frontend direction
 
-The Rust port uses `crates/adk-web` for the web shell. It is Yew + Trunk + Tailwind-oriented, with Yew dependency isolated to the `wasm32` target so native workspace checks remain fast and deterministic.
+adk-rs is a self-contained runtime with no bundled web frontend. Agents are
+driven directly through the core library, the `adk-cli` inspection helper, and
+the `adk-mcp` MCP server (typed agents created from JSON or YAML specs).

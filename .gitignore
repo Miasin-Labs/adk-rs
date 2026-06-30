@@ -9,11 +9,4 @@
 /rust-wide-chat-after-graph-fix.png
 /yew-composer-fixed.png
 /yew-openai-final.png
-
-# Vendored upstream n8n workspace (built into the dev UI)
-/n8n/
-# Built n8n editor-ui SPA (regenerate via scripts/prepare-n8n-ui.mjs)
-/crates/adk-server/static/n8n-editor-ui/
-
-# n8n workflow store (dev data)
-/crates/adk-server/.n8n-data/
+/.jfc/

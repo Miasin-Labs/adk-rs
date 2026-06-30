@@ -149,6 +149,6 @@ pub use tool::{
 pub use tool_context::{ReadonlyContext, ToolContext};
 pub use tool_declaration::{FunctionDeclaration, ToolArgsConfig, ToolConfig, ToolConfirmation};
 pub use toolset::Toolset;
-pub use visual_builder::{AgentBlueprint, VisualAgentBuilder, VisualBuilderError};
+pub use visual_builder::{AgentBlueprint, BlueprintFormat, VisualAgentBuilder, VisualBuilderError};
 pub use workflow::{WorkflowEdge, WorkflowError, WorkflowGraph, WorkflowNode, WorkflowNodeKind};
 pub use workflow_runtime::{WorkflowRuntime, WorkflowRuntimeError};

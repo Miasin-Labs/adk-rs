@@ -63,8 +63,9 @@ then emits the final post.
 
 ## Trail advisor
 
-Use this as the first n8n-style milestone: one agent with local calendar/trail
-tools, two HTTP-backed tools, scoped credentials, and a safe message preview.
+Use this as the first personal-assistant milestone: one agent with local
+calendar/trail tools, two HTTP-backed tools, scoped credentials, and a safe
+message preview.
 
 ```bash
 cargo run --example trail_advisor

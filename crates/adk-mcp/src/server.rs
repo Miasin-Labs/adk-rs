@@ -21,7 +21,7 @@ use rmcp::service::RequestContext;
 use rmcp::{Json, ServerHandler, tool, tool_handler, tool_router};
 use serde::{Deserialize, Serialize};
 
-use crate::registry::{AgentKindSpec, AgentRegistry, AgentSpec, AgentSummary, now_secs};
+use crate::registry::{AgentKindSpec, AgentRegistry, AgentSpec, AgentSummary, SpecFormat, now_secs};
 use crate::tools::{EXECUTABLE_TOOLS, resolve_tool};
 
 /// OpenAI-compatible model provider config, derived from the environment.
@@ -98,6 +98,28 @@ pub struct UpdateAgentRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateAgentFromSpecRequest {
+    #[schemars(description = "Full agent spec document (JSON or YAML). Requires at least `name` and `instructions`.")]
+    pub spec: String,
+    #[schemars(description = "Spec format: 'json' or 'yaml'. Omit to auto-detect from the content.")]
+    pub format: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SpecFileRequest {
+    #[schemars(description = "Path to a local agent spec file (.json, .yaml, or .yml).")]
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ExportAgentRequest {
+    #[schemars(description = "Name of the agent to export.")]
+    pub name: String,
+    #[schemars(description = "Output format: 'json' or 'yaml' (default).")]
+    pub format: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct AgentNameRequest {
     #[schemars(description = "Name of the agent.")]
     pub name: String,
@@ -124,6 +146,13 @@ pub struct ListAgentsResponse {
 pub struct DeleteResponse {
     pub name: String,
     pub deleted: bool,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ExportAgentResponse {
+    pub name: String,
+    pub format: String,
+    pub document: String,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -258,6 +287,78 @@ impl AdkMcp {
         // Validate it actually builds before persisting.
         self.build_agent(&spec)?;
         self.registry.put(spec).await.map(Json).map_err(|error| error.to_string())
+    }
+
+    /// Stamp defaults/timestamps on a freshly parsed spec, validate that it
+    /// builds, and persist it. Rejects empty or already-registered names.
+    async fn register_new_spec(&self, mut spec: AgentSpec) -> Result<Json<AgentSpec>, String> {
+        if spec.name.trim().is_empty() {
+            return Err("agent name must be non-empty".into());
+        }
+        if self.registry.get(&spec.name).await.is_some() {
+            return Err(format!("agent '{}' already exists; use update_agent", spec.name));
+        }
+        if spec.model.trim().is_empty() {
+            spec.model = self.provider.default_model.clone();
+        }
+        let now = now_secs();
+        spec.created_at = now;
+        spec.updated_at = now;
+        // Validate it actually builds before persisting.
+        self.build_agent(&spec)?;
+        self.registry.put(spec).await.map(Json).map_err(|error| error.to_string())
+    }
+
+    #[tool(
+        description = "Create a new agent from a JSON or YAML spec document (name, instructions, model, tools, kind). Only `name` and `instructions` are required; an empty model falls back to the server default."
+    )]
+    pub async fn create_agent_from_spec(
+        &self,
+        Parameters(req): Parameters<CreateAgentFromSpecRequest>,
+    ) -> Result<Json<AgentSpec>, String> {
+        let format = match req.format.as_deref() {
+            Some("json") => SpecFormat::Json,
+            Some("yaml") | Some("yml") => SpecFormat::Yaml,
+            Some(other) => return Err(format!("unknown format '{other}'; use 'json' or 'yaml'")),
+            None => SpecFormat::detect(&req.spec),
+        };
+        let spec = AgentSpec::parse(&req.spec, format).map_err(|error| format!("invalid spec: {error}"))?;
+        self.register_new_spec(spec).await
+    }
+
+    #[tool(
+        description = "Create a new agent from a local spec file (.json, .yaml, or .yml). The format is detected from the file extension."
+    )]
+    pub async fn create_agent_from_file(
+        &self,
+        Parameters(req): Parameters<SpecFileRequest>,
+    ) -> Result<Json<AgentSpec>, String> {
+        let spec = AgentSpec::from_file(&req.path).map_err(|error| format!("cannot load spec: {error}"))?;
+        self.register_new_spec(spec).await
+    }
+
+    #[tool(description = "Export an existing agent's spec as a JSON or YAML document.")]
+    pub async fn export_agent(
+        &self,
+        Parameters(req): Parameters<ExportAgentRequest>,
+    ) -> Result<Json<ExportAgentResponse>, String> {
+        let spec = self
+            .registry
+            .get(&req.name)
+            .await
+            .ok_or_else(|| format!("no agent named '{}'", req.name))?;
+        let format = req.format.as_deref().unwrap_or("yaml");
+        let document = match format {
+            "json" => spec.to_json_string(),
+            "yaml" | "yml" => spec.to_yaml_string(),
+            other => return Err(format!("unknown format '{other}'; use 'json' or 'yaml'")),
+        }
+        .map_err(|error| error.to_string())?;
+        Ok(Json(ExportAgentResponse {
+            name: req.name,
+            format: format.to_owned(),
+            document,
+        }))
     }
 
     #[tool(description = "Update fields of an existing agent. Only provided fields change.")]
@@ -407,9 +508,13 @@ impl ServerHandler for AdkMcp {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("adk-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "Create, list, inspect, run, and delete adk-rs agents. \
+                "Create, list, inspect, run, export, and delete adk-rs agents. \
                  Workflow: list_models / list_builtin_tools to discover options, \
-                 create_agent to make one, run_agent to execute it, update_agent to iterate. \
+                 then create an agent with create_agent (individual fields), \
+                 create_agent_from_spec (a JSON or YAML spec document), or \
+                 create_agent_from_file (a local .json/.yaml/.yml file); \
+                 run_agent to execute it, update_agent to iterate, export_agent to \
+                 dump it back out as JSON or YAML. \
                  Agents persist to disk and are rebuilt from spec on each run. \
                  Set OPENAI_API_KEY (and optionally OPENAI_BASE_URL, OPENAI_MODEL) to run them."
                     .to_owned(),
