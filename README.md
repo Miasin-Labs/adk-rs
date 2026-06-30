@@ -115,6 +115,8 @@ cargo run --example tool_agent
 cargo run --example handoff_agents
 cargo run --example react_agent
 cargo run --example sequential_workflow
+cargo run --example parallel_workflow
+cargo run --example loop_workflow
 cargo run --example trail_advisor
 ```
 
@@ -186,6 +188,10 @@ through the library or `AgentBlueprint`.)
 - `sequential_workflow`: a `Sequential` agent runs its sub-agents in order
   (scope -> analyze -> report) over one shared session, each stage building on
   the last.
+- `parallel_workflow`: a `Parallel` agent fans isolated, concurrent branches
+  out (independent risk dimensions) and merges their results back in.
+- `loop_workflow`: a `Loop` agent refines a draft until a child escalates
+  (the evaluator-optimizer shape).
 - `trail_advisor`: personal-assistant demo with local HTTP tools, scoped
   credentials, memory-window config, and message-preview safety.
 

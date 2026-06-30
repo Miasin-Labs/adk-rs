@@ -153,6 +153,26 @@ impl LanguageModel for EscalateAfterModel {
     }
 }
 
+/// Waits on a shared barrier before responding. Used to prove parallel branches
+/// run concurrently: if N branches share a barrier of N, they only proceed when
+/// all N are in-flight at once. Sequential execution would deadlock.
+struct BarrierModel {
+    barrier: Arc<tokio::sync::Barrier>,
+    label: &'static str,
+}
+
+#[async_trait]
+impl LanguageModel for BarrierModel {
+    async fn generate(&self, _request: ModelRequest) -> Result<ModelResponse, ModelError> {
+        self.barrier.wait().await;
+        Ok(ModelResponse {
+            text: Some(format!("{} ran", self.label)),
+            tool_calls: Vec::new(),
+            actions: EventActions::default(),
+        })
+    }
+}
+
 struct PanicModel;
 
 #[async_trait]
@@ -417,16 +437,73 @@ async fn runner_runs_parallel_sub_agents_each_once_normal() {
         .await
         .unwrap();
 
-    let branches: Vec<String> = output
+    let stage_texts: Vec<(String, String)> = output
         .events
         .iter()
-        .filter_map(|event| match &event.author {
-            EventAuthor::Agent(name) => Some(name.as_str().to_owned()),
+        .filter_map(|event| match (&event.author, event.parts.first()) {
+            (EventAuthor::Agent(name), Some(EventPart::Text(text))) => {
+                Some((name.as_str().to_owned(), text.clone()))
+            }
             _ => None,
         })
         .collect();
-    // Every branch ran exactly once, in declaration order.
-    assert_eq!(branches, vec!["branch_a", "branch_b", "branch_c"]);
+    // Every branch ran exactly once and merged back in declaration order.
+    let names: Vec<&str> = stage_texts.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, vec!["branch_a", "branch_b", "branch_c"]);
+    // Isolation: every branch saw the SAME fan-out snapshot (just the user
+    // event), not each other's output. If branches shared a session they would
+    // see 1, 2, 3 events respectively.
+    for (_, text) in &stage_texts {
+        assert!(
+            text.contains("saw 1 events"),
+            "branch should only see the fan-out snapshot, got: {text}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn runner_runs_parallel_branches_concurrently_robust() {
+    // A barrier of 3 only releases when all 3 branches are awaiting it at once.
+    // If the runner executed branches sequentially, branch 1 would block here
+    // forever and the test would time out.
+    let barrier = Arc::new(tokio::sync::Barrier::new(3));
+    let mut builder = AgentBuilder::new(
+        AgentName::new("fanout").unwrap(),
+        "run branches concurrently",
+        Arc::new(PanicModel),
+    )
+    .parallel();
+    for label in ["x", "y", "z"] {
+        let branch = AgentBuilder::new(
+            AgentName::new(format!("branch_{label}")).unwrap(),
+            "branch",
+            Arc::new(BarrierModel {
+                barrier: Arc::clone(&barrier),
+                label,
+            }),
+        )
+        .build()
+        .unwrap();
+        builder = builder.sub_agent(branch);
+    }
+    let fanout = builder.build().unwrap();
+
+    let runner = Runner::new(InMemorySessionStore::default(), fanout);
+    let session_id = SessionId::new("par-conc").unwrap();
+    let run = runner.run(&session_id, InvocationId::new("i-par-conc").unwrap(), "go");
+    // Generous timeout: concurrent branches finish near-instantly; sequential
+    // execution can never satisfy the barrier and would hang.
+    let output = tokio::time::timeout(std::time::Duration::from_secs(5), run)
+        .await
+        .expect("parallel branches must run concurrently, not sequentially")
+        .unwrap();
+
+    let count = output
+        .events
+        .iter()
+        .filter(|event| matches!(&event.author, EventAuthor::Agent(_)))
+        .count();
+    assert_eq!(count, 3);
 }
 
 #[tokio::test]

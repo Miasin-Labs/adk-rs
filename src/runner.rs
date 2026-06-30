@@ -202,9 +202,10 @@ impl<S: SessionStore> Runner<S> {
     ///   handoffs across the agent tree.
     /// - `Sequential`: run each sub-agent in declaration order over the shared
     ///   session, so each stage sees the prior stages' output.
-    /// - `Parallel`: run each sub-agent independently over the shared session
-    ///   (sequentially executed here, but with no data dependency between
-    ///   branches — each branch only fans results back in).
+    /// - `Parallel`: fan each sub-agent out as a genuinely isolated branch over
+    ///   a snapshot of the session taken at fan-out (so branches do not see one
+    ///   another's events), run the branches concurrently, then merge their
+    ///   events back into the shared session in declaration order.
     /// - `Loop`: re-run the sub-agent pipeline until a child escalates
     ///   (`EventActions::escalate`) or `max_iterations` is reached.
     ///
@@ -227,7 +228,7 @@ impl<S: SessionStore> Runner<S> {
                         .await
                 }
                 AgentKind::Parallel if !agent.sub_agents.is_empty() => {
-                    self.run_children_once(agent, context, session, invocation_id, emitted, trace)
+                    self.run_parallel(agent, context, session, invocation_id, emitted, trace)
                         .await
                 }
                 AgentKind::Loop { max_iterations } if !agent.sub_agents.is_empty() => {
@@ -301,6 +302,65 @@ impl<S: SessionStore> Runner<S> {
             }
         }
         Ok(last)
+    }
+
+    /// Fan `parent`'s sub-agents out as isolated, concurrent branches.
+    ///
+    /// Each branch runs against an independent clone of the session and context
+    /// snapshotted at fan-out, so no branch observes another branch's events.
+    /// Branches run concurrently; their events are then merged back into the
+    /// shared session in declaration order. If any branch suspends (tool
+    /// approval), the whole node reports suspended.
+    async fn run_parallel(
+        &self,
+        parent: &Agent,
+        context: &mut InvocationContext,
+        session: &mut Session,
+        invocation_id: InvocationId,
+        emitted: &mut Vec<Event>,
+        trace: &mut RunTrace,
+    ) -> Result<NodeOutcome, RunError> {
+        // Snapshot of the session/context every branch sees. `clone()` here is
+        // the isolation boundary: branches mutate their own copies only.
+        let branch_futures = parent.sub_agents.iter().map(|child| {
+            let mut branch_session = session.clone();
+            let mut branch_context = context.clone();
+            let invocation_id = invocation_id.clone();
+            async move {
+                let mut branch_emitted = Vec::new();
+                let mut branch_trace = RunTrace::default();
+                let outcome = self
+                    .run_node(
+                        child,
+                        &mut branch_context,
+                        &mut branch_session,
+                        invocation_id,
+                        &mut branch_emitted,
+                        &mut branch_trace,
+                    )
+                    .await?;
+                Ok::<_, RunError>((branch_emitted, branch_trace.steps, outcome))
+            }
+        });
+        let results = futures::future::join_all(branch_futures).await;
+
+        // Merge branch results back into the shared session in declaration
+        // order. Branch events already passed through `on_event` inside the
+        // branch, so append them directly (re-running plugins would double-fire).
+        let mut node_outcome = NodeOutcome::done(FinishReason::Stop);
+        for result in results {
+            let (branch_emitted, branch_trace_steps, outcome) = result?;
+            for event in branch_emitted {
+                session.append(event.clone());
+                emitted.push(event);
+            }
+            trace.steps.extend(branch_trace_steps);
+            // The first suspended branch wins the reported outcome.
+            if outcome.is_suspended() && !node_outcome.is_suspended() {
+                node_outcome = outcome;
+            }
+        }
+        Ok(node_outcome)
     }
 
     /// Run a single agent through one or more LLM cycles, following any

@@ -15,8 +15,18 @@ only model-driven `transfer_to_agent` handoffs ran. All workflow kinds run their
 
 Orchestration is recursive, so workflow agents nest. A workflow kind with no
 sub-agents degrades to a single LLM cycle, and a model-driven
-`transfer_to_agent` still takes precedence within a stage. Added the
-`sequential_workflow` example and runner tests for all three kinds.
+`transfer_to_agent` still takes precedence within a stage.
+
+`Parallel` runs its branches **isolated and concurrent**: each branch executes
+against a clone of the session snapshotted at fan-out (no branch sees another
+branch's events), the branches run concurrently via `futures::join_all`, and
+their events merge back into the shared session in declaration order. Added
+`futures` as a direct dependency.
+
+Examples: `sequential_workflow`, `parallel_workflow`, `loop_workflow`. Runner
+tests cover sequential ordering, parallel isolation, parallel concurrency (a
+barrier that would deadlock under sequential execution), loop-until-escalation,
+and loop max-iterations.
 
 ## Standalone runtime: dev-server / external editor UI removed
 
